@@ -45,6 +45,12 @@
                   </pin>
                   <pin peripheral="SWD" signal="clk" pin_num="96" pin_signal="PTC4"/>
                   <pin peripheral="SWD" signal="dio" pin_num="98" pin_signal="PTA4"/>
+                  <pin peripheral="LPUART1" signal="rxd" pin_num="81" pin_signal="PTC6"/>
+                  <pin peripheral="LPUART1" signal="txd" pin_num="80" pin_signal="PTC7">
+                     <pin_features>
+                        <pin_feature name="direction" value="OUTPUT"/>
+                     </pin_features>
+                  </pin>
                </pins>
             </function>
          </functions_list>
@@ -115,6 +121,7 @@
                   <clock_output id="FTFC0_CLK.outFreq" value="20 MHz" locked="false" accuracy=""/>
                   <clock_output id="LPO_1K_CLK.outFreq" value="1 kHz" locked="false" accuracy=""/>
                   <clock_output id="LPO_CLK.outFreq" value="128 kHz" locked="false" accuracy=""/>
+                  <clock_output id="LPUART1_CLK.outFreq" value="8 MHz" locked="false" accuracy=""/>
                   <clock_output id="MPU0_CLK.outFreq" value="80 MHz" locked="false" accuracy=""/>
                   <clock_output id="MSCM0_CLK.outFreq" value="80 MHz" locked="false" accuracy=""/>
                   <clock_output id="PORTA_CLK.outFreq" value="40 MHz" locked="false" accuracy=""/>
@@ -161,7 +168,6 @@
                   <setting id="LPSPI1_CGC" value="Disabled" locked="false"/>
                   <setting id="LPSPI2_CGC" value="Disabled" locked="false"/>
                   <setting id="LPUART0_CGC" value="Disabled" locked="false"/>
-                  <setting id="LPUART1_CGC" value="Disabled" locked="false"/>
                   <setting id="LPUART2_CGC" value="Disabled" locked="false"/>
                   <setting id="PCC.LPTMR0_CLK_SEL.sel" value="NO_CLOCK" locked="false"/>
                   <setting id="PCC.LPTMR0_FRAC.scale" value="1" locked="true"/>
@@ -235,8 +241,20 @@
                   <data type="Version">1.0.0</data>
                </feature>
             </dependency>
+            <dependency resourceType="SWComponent" resourceId="platform.driver.lpuart" description="工具链/IDE工程中未找到LPUART Driver。工程不会被编译！" problem_level="2" source="Peripherals">
+               <feature name="enabled" evaluation="equal">
+                  <data type="Boolean">true</data>
+               </feature>
+            </dependency>
+            <dependency resourceType="SWComponent" resourceId="platform.driver.lpuart" description="工具链/IDE工程不支持LPUART Driver版本。所需值: ${required_value}, 实际值: ${actual_value}. 工程可能没有被正确编译。" problem_level="1" source="Peripherals">
+               <feature name="version" evaluation="equivalent">
+                  <data type="Version">1.0.0</data>
+               </feature>
+            </dependency>
          </dependencies>
          <generated_project_files>
+            <file path="board/peripherals_lpuart_1.c" update_enabled="true"/>
+            <file path="board/peripherals_lpuart_1.h" update_enabled="true"/>
             <file path="board/peripherals_osif_1.c" update_enabled="true"/>
             <file path="board/peripherals_osif_1.h" update_enabled="true"/>
             <file path="board/sdk_project_config.h" update_enabled="true"/>
@@ -252,6 +270,24 @@
                <instances>
                   <instance name="osif_1" uuid="5d8b3a02-3415-4474-bbea-f693dde1ca39" type="osif" type_id="osif" mode="general" enabled="true" comment="" custom_name_enabled="false" editing_lock="false">
                      <config_set name="osif"/>
+                  </instance>
+                  <instance name="lpuart_1" uuid="9e602279-85a3-4c62-9295-d9ffeb2c145e" type="lpuart_config" type_id="lpuart" mode="general" peripheral="LPUART_1" enabled="true" comment="" custom_name_enabled="false" editing_lock="false">
+                     <config_set name="lpuart_driver">
+                        <setting name="lpuart_state_name" value="lpUartState1"/>
+                        <array name="lpuart_configuration">
+                           <struct name="0">
+                              <setting name="name" value="lpuart_1_InitConfig0"/>
+                              <setting name="readonly" value="false"/>
+                              <setting name="transferType" value="LPUART_USING_INTERRUPTS"/>
+                              <setting name="baudRate" value="115200"/>
+                              <setting name="parityMode" value="LPUART_PARITY_DISABLED"/>
+                              <setting name="stopBitCount" value="LPUART_ONE_STOP_BIT"/>
+                              <setting name="bitCountPerChar" value="LPUART_8_BITS_PER_CHAR"/>
+                              <setting name="rxDMAChannel" value="0"/>
+                              <setting name="txDMAChannel" value="0"/>
+                           </struct>
+                        </array>
+                     </config_set>
                   </instance>
                </instances>
             </functional_group>

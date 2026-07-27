@@ -1,13 +1,25 @@
 #include "sdk_project_config.h"
 #include "osif.h"          // 添加 OSIF 头文件，提供 OSIF_TimeDelay
+#include "lpuart_driver.h" // LPUART 驱动头文件
+#include <stdio.h>
 
 /* ===== 根据你的硬件实际连接，直接定义引脚 ===== */
-#define PCC_CLOCK   PCC_PORTD_CLOCK    /* PTD15/16 属于 PORTD */
 #define LED0_PORT   PTD
 #define LED0_PIN    15
 #define LED1_PORT   PTD
 #define LED1_PIN    16
 /* ============================================ */
+
+/* ========== 串口发送业务代码 ========== */
+static const uint8_t bootMsg[] =
+    "\r\n========================================\r\n"
+    "  S32K144 System Boot\r\n"
+    "  CORE_CLK  = 80 MHz\r\n"
+    "  BUS_CLK   = 40 MHz\r\n"
+    "  FLASH_CLK = 20 MHz\r\n"
+    "  LPUART1   = 115200 8N1\r\n"
+    "========================================\r\n\r\n";
+/* ===================================== */
 
 int main(void)
 {
@@ -22,6 +34,10 @@ int main(void)
     /* 3. 初始状态：LED0 亮，LED1 灭（假设高电平点亮；若低电平点亮，把 Set/Clear 对调） */
     PINS_DRV_SetPins(LED0_PORT, 1u << LED0_PIN);
     PINS_DRV_ClearPins(LED1_PORT, 1u << LED1_PIN);
+
+    /* 4. 上电发送系统信息（轮询模式） */
+    LPUART_DRV_Init(INST_LPUART_1, &lpUartState1, &lpuart_1_InitConfig0);
+    LPUART_DRV_SendDataPolling(1U, bootMsg, sizeof(bootMsg) - 1U);
 
     for (;;)
     {

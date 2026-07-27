@@ -45,6 +45,7 @@ outputs:
 - {id: FTFC0_CLK.outFreq, value: 20 MHz}
 - {id: LPO_1K_CLK.outFreq, value: 1 kHz}
 - {id: LPO_CLK.outFreq, value: 128 kHz}
+- {id: LPUART1_CLK.outFreq, value: 8 MHz}
 - {id: MPU0_CLK.outFreq, value: 80 MHz}
 - {id: MSCM0_CLK.outFreq, value: 80 MHz}
 - {id: PORTA_CLK.outFreq, value: 40 MHz}
@@ -90,7 +91,6 @@ settings:
 - {id: LPSPI1_CGC, value: Disabled}
 - {id: LPSPI2_CGC, value: Disabled}
 - {id: LPUART0_CGC, value: Disabled}
-- {id: LPUART1_CGC, value: Disabled}
 - {id: LPUART2_CGC, value: Disabled}
 - {id: PCC.LPTMR0_CLK_SEL.sel, value: NO_CLOCK}
 - {id: PCC.LPTMR0_FRAC.scale, value: '1', locked: true}
@@ -131,6 +131,13 @@ settings:
 * ************************************************************************* */
 /*! @brief peripheral clock configuration 0 */
 peripheral_clock_config_t peripheralClockConfig0[NUM_OF_PERIPHERAL_CLOCKS_0] = {
+    {
+        .clockName = LPUART1_CLK,
+        .clkGate = true,
+        .clkSrc = CLK_SRC_SOSC_DIV2,
+        .frac = MULTIPLY_BY_ONE,
+        .divider = DIVIDE_BY_ONE,
+    },
     {
         .clockName = FTFC0_CLK,
         .clkGate = true,

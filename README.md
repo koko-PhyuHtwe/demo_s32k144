@@ -11,8 +11,8 @@ S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外�
 | MCU | **S32K144** (Cortex-M4F, LQFP100) |
 | SDK | S32SDK_S32K1XX_RTM_4.0.2 |
 | 外部晶振 | 8 MHz（SOSC） |
-| SPLL 倍频 | ×40（输出 320 MHz） |
-| 核心频率 | 80 MHz（HSRUN 模式） |
+| SPLL 倍频 | ×40（VCO 320 MHz，输出 160 MHz） |
+| 核心频率 | 80 MHz（RUN/HSRUN 模式） |
 | Flash | 512 KB |
 | SRAM | 60 KB |
 
@@ -21,28 +21,30 @@ S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外�
 ## 时钟架构
 
 ```
-                    ┌─────────────────────────────────────────────┐
-                    │              外部晶振 (SOSC)                  │
-                    │              8 MHz                           │
-                    └─────────────────┬───────────────────────────┘
-                                      │
-                    ┌─────────────────▼───────────────────────────┐
-                    │         SPLL 倍频器 (×40)                    │
-                    │         输出: 320 MHz                        │
-                    └─────────────────┬───────────────────────────┘
-                                      │
-                    ┌─────────────────▼───────────────────────────┐
-                    │         SPLLDIV1 (÷2)                        │
-                    │         SPLL_CLK_OUT: 160 MHz                │
-                    └─────────────────┬───────────────────────────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              │                       │                       │
-    ┌─────────▼─────────┐   ┌────────▼────────┐   ┌─────────▼─────────┐
-    │    DIVCORE (÷2)    │   │   DIVBUS (÷2)   │   │  DIVSLOW (÷4)    │
-    │  CORE_CLK: 80 MHz  │   │  BUS_CLK: 40 MHz│   │ FLASH_CLK: 20 MHz│
-    └────────────────────┘   └─────────────────┘   └───────────────────┘
+        ┌─────────────────────────────────────────────┐
+        │              外部晶振 (SOSC)                  │
+        │              8 MHz                           │
+        └─────────────────┬───────────────────────────┘
+                          │
+        ┌─────────────────▼───────────────────────────┐
+        │    SPLL: VCO = 8MHz × 40 = 320 MHz          │
+        │    SPLL_CLK_OUT = VCO ÷ 2 = 160 MHz         │
+        └─────────────────┬───────────────────────────┘
+                          │
+        ┌─────────────────▼───────────────────────────┐
+        │    DIVCORE (÷2)                              │
+        │    CORE_CLK = 160 ÷ 2 = 80 MHz               │
+        └─────────────────┬───────────────────────────┘
+                          │
+              ┌───────────┴───────────┐
+              │                       │
+    ┌─────────▼─────────┐   ┌─────────▼─────────┐
+    │   DIVBUS (÷2)     │   │  DIVSLOW (÷4)     │
+    │ BUS_CLK = 40 MHz  │   │ FLASH_CLK = 20 MHz│
+    └────────────────────┘   └───────────────────┘
 ```
+
+> 注：DIVBUS 和 DIVSLOW 都从 CORE_CLK 分频，是级联关系而非并列。
 
 ### 时钟域频率表
 
@@ -60,7 +62,7 @@ S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外�
 |------|--------|----------|---------|
 | **RUN** | SPLL | 80 MHz | 40 MHz |
 | **HSRUN** | SPLL | 80 MHz | 40 MHz |
-| **VLPR** | SIRC | 4 MHz | 8 MHz |
+| **VLPR** | SIRC | 4 MHz | 4 MHz |
 
 ---
 
@@ -100,10 +102,10 @@ demo_s32k144/
 |------|------|------|
 | **PTD15** | GPIO 输出 | LED0（红），高电平点亮 |
 | **PTD16** | GPIO 输出 | LED1（绿），高电平点亮 |
+| **PTC6** | LPUART1_RX | 串口接收 |
+| **PTC7** | LPUART1_TX | 串口发送 |
 | **PTA4** | SWD_DIO | SWD 调试数据线，不可占用 |
 | **PTC4** | SWD_CLK | SWD 调试时钟线，不可占用 |
-
-> ⚠️ **LPUART1 引脚（PTC6/PTC7）尚未配置**，如需使用 UART 请在 S32 Config Tools 中配置。
 
 ### SysTick（1 ms 节拍）
 
@@ -112,47 +114,40 @@ demo_s32k144/
 - `OSIF_GetMilliseconds()` 获取系统运行毫秒数
 - `SysTick_Handler` 在 `SDK/rtos/osif/osif_baremetal.c` 中实现
 
-### LPUART1 时钟
+### LPUART1 串口
 
-已配置时钟源为 `SCG.SOSCDIV2_CLK`（8 MHz，来自外部晶振），但时钟门控当前为 **Disabled**。
+| 参数 | 值 |
+|------|-----|
+| 实例 | LPUART1 |
+| 引脚 | PTC6 (RX) / PTC7 (TX) |
+| 时钟源 | SOSCDIV2 = 8 MHz（外部晶振分频） |
+| 时钟门控 | 已开启 |
+| 波特率 | 115200 |
+| 数据格式 | 8N1 |
+| 发送方式 | 轮询（`LPUART_DRV_SendDataPolling`） |
 
-> 如需启用 LPUART1，需在 `clock_config.c` 中将 `LPUART1_CGC` 改为 `Enabled`。
+上电后自动发送系统启动信息（时钟频率、串口参数），之后进入 LED 闪烁循环。
 
 ---
 
 ## main.c 功能说明
 
-当前程序实现了 LED 闪烁功能：
+当前程序实现了 LED 闪烁 + 串口上电打印功能：
 
-```c
-#include "sdk_project_config.h"
-#include "osif.h"
+1. 初始化时钟、引脚
+2. LED0 亮，LED1 灭
+3. 串口轮询发送系统启动信息（时钟频率、串口参数）
+4. 主循环：LED 每秒交替闪烁
 
-#define LED0_PORT   PTD
-#define LED0_PIN    15
-#define LED1_PORT   PTD
-#define LED1_PIN    16
-
-int main(void)
-{
-    /* 1. 初始化时钟（外部晶振 + SPLL） */
-    CLOCK_DRV_Init(&clockMan1_InitConfig0);
-
-    /* 2. 初始化引脚 */
-    PINS_DRV_Init(NUM_OF_CONFIGURED_PINS0, g_pin_mux_InitConfigArr0);
-
-    /* 3. LED0 亮，LED1 灭 */
-    PINS_DRV_SetPins(LED0_PORT, 1u << LED0_PIN);
-    PINS_DRV_ClearPins(LED1_PORT, 1u << LED1_PIN);
-
-    /* 4. 主循环：LED 交替闪烁 */
-    for (;;)
-    {
-        OSIF_TimeDelay(1000);               // 延时 1 秒
-        PINS_DRV_TogglePins(LED0_PORT, 1u << LED0_PIN);
-        PINS_DRV_TogglePins(LED1_PORT, 1u << LED1_PIN);
-    }
-}
+串口输出示例：
+```
+========================================
+  S32K144 系统启动
+  CORE_CLK  = 80 MHz
+  BUS_CLK   = 40 MHz
+  FLASH_CLK = 20 MHz
+  LPUART1   = 115200 8N1
+========================================
 ```
 
 ---
@@ -213,7 +208,7 @@ Project → Build Project
 2. **内部时钟切换**：如无需外部晶振，可将 `soscConfig.initialize` 设为 `false`，并将系统时钟源改回 FIRC（48 MHz）。
 3. **不要手动修改 `board/` 目录下带 "This file was generated by..." 注释的文件**，否则下次用 Config Tools 更新时会被覆盖。
 4. **`.settings/language.settings.xml` 已加入 `.gitignore`**，换台电脑导入工程后 IDE 会自动重新生成。
-5. 如需更改为 **FreeRTOS** 版本，将工程宏定义 `USING_OS_BAREMETAL` 改为 `USING_OS_FREERTOS`，并链接 FreeRTOS 版本的 `osif_freertos.c`。
+5. **OSIF 模式**：当前为裸机模式（默认，无需定义任何宏）。如需切换为 **FreeRTOS** 版本，在工程预处理符号中定义 `USING_OS_FREERTOS`，并将 OSIF 组件从 `osif_baremetal.c` 替换为 `osif_freertos.c`。
 
 ---
 

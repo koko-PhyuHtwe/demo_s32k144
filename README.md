@@ -1,6 +1,6 @@
 # S32K144 最小系统模板
 
-S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外部晶振 + LED 闪烁 + OSIF 延时，可直接作为新工程的起点。
+S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外部晶振 + LED 闪烁 + OSIF 延时 + LPUART1 串口 + FlexCAN2 周期发送，可直接作为新工程的起点。
 
 ---
 
@@ -71,11 +71,13 @@ S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外�
 ```
 demo_s32k144/
 ├── src/
-│   └── main.c                      ← 主程序（LED 闪烁 + OSIF 延时）
+│   └── main.c                      ← 主程序（LED 闪烁 + 串口 + CAN 发送）
 ├── board/                          ← 板级配置（S32 Config Tools 生成）
 │   ├── clock_config.c / .h         ← 时钟树配置（外部晶振 + SPLL）
 │   ├── pin_mux.c / .h              ← 引脚复用配置
 │   ├── peripherals_osif_1.c / .h   ← OSIF 外设配置
+│   ├── peripherals_lpuart_1.c / .h ← LPUART1 配置（变量定义，需手动 Init）
+│   ├── peripherals_flexcan_config_1.c / .h ← FlexCAN2 配置（变量定义，需手动 Init）
 │   └── sdk_project_config.h        ← SDK 统一头文件
 ├── SDK/
 │   ├── platform/drivers/inc/       ← 驱动头文件
@@ -104,6 +106,8 @@ demo_s32k144/
 | **PTD16** | GPIO 输出 | LED1（绿），高电平点亮 |
 | **PTC6** | LPUART1_RX | 串口接收 |
 | **PTC7** | LPUART1_TX | 串口发送 |
+| **PTC16** | CAN2_RX | FlexCAN2 接收 |
+| **PTC17** | CAN2_TX | FlexCAN2 发送 |
 | **PTA4** | SWD_DIO | SWD 调试数据线，不可占用 |
 | **PTC4** | SWD_CLK | SWD 调试时钟线，不可占用 |
 
@@ -128,26 +132,50 @@ demo_s32k144/
 
 上电后自动发送系统启动信息（时钟频率、串口参数），之后进入 LED 闪烁循环。
 
+### FlexCAN2 控制器
+
+| 参数 | 值 |
+|------|-----|
+| 实例 | FlexCAN2 |
+| 引脚 | PTC16 (RX) / PTC17 (TX) |
+| 时钟源 | OSC = 8 MHz（外部晶振） |
+| 时钟门控 | 已开启 |
+| 工作模式 | Normal 模式 |
+| 帧格式 | 标准帧（11 位 ID） |
+| 数据长度 | 8 字节 |
+| 发送方式 | 阻塞（`FLEXCAN_DRV_SendBlocking`，轮询等待） |
+
+主循环中每秒发送一帧：
+- ID：`0x123`（标准帧）
+- 数据：`11 22 33 44 55 66 77 88`
+- 周期：约 1 秒（与 LED 闪烁同步）
+
 ---
 
 ## main.c 功能说明
 
-当前程序实现了 LED 闪烁 + 串口上电打印功能：
+当前程序实现了 LED 闪烁 + 串口上电打印 + CAN 周期发送功能：
 
 1. 初始化时钟、引脚
 2. LED0 亮，LED1 灭
-3. 串口轮询发送系统启动信息（时钟频率、串口参数）
-4. 主循环：LED 每秒交替闪烁
+3. 初始化 LPUART1，轮询发送系统启动信息
+4. 初始化 FlexCAN2，配置 MB0 为发送邮箱
+5. 主循环：每秒翻转 LED + 发送一帧 CAN 报文
 
 串口输出示例：
 ```
 ========================================
-  S32K144 系统启动
+  S32K144 System Boot
   CORE_CLK  = 80 MHz
   BUS_CLK   = 40 MHz
   FLASH_CLK = 20 MHz
   LPUART1   = 115200 8N1
 ========================================
+```
+
+CAN 发送示例：
+```
+ID: 0x123  DLC: 8  Data: 11 22 33 44 55 66 77 88
 ```
 
 ---

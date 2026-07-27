@@ -51,6 +51,8 @@
                         <pin_feature name="direction" value="OUTPUT"/>
                      </pin_features>
                   </pin>
+                  <pin peripheral="CAN2" signal="txd, txd" pin_num="43" pin_signal="PTC17"/>
+                  <pin peripheral="CAN2" signal="rxd, rxd" pin_num="44" pin_signal="PTC16"/>
                </pins>
             </function>
          </functions_list>
@@ -118,6 +120,7 @@
                   <clock_output id="FIRCDIV1_CLK.outFreq" value="48 MHz" locked="false" accuracy=""/>
                   <clock_output id="FIRCDIV2_CLK.outFreq" value="48 MHz" locked="false" accuracy=""/>
                   <clock_output id="FLASH_CLK.outFreq" value="20 MHz" locked="false" accuracy=""/>
+                  <clock_output id="FLEXCAN2_CLK.outFreq" value="80 MHz" locked="false" accuracy=""/>
                   <clock_output id="FTFC0_CLK.outFreq" value="20 MHz" locked="false" accuracy=""/>
                   <clock_output id="LPO_1K_CLK.outFreq" value="1 kHz" locked="false" accuracy=""/>
                   <clock_output id="LPO_CLK.outFreq" value="128 kHz" locked="false" accuracy=""/>
@@ -152,7 +155,6 @@
                   <setting id="EWM_CGC" value="Disabled" locked="false"/>
                   <setting id="FLEXCAN0_CGC" value="Disabled" locked="false"/>
                   <setting id="FLEXCAN1_CGC" value="Disabled" locked="false"/>
-                  <setting id="FLEXCAN2_CGC" value="Disabled" locked="false"/>
                   <setting id="FTM0_CGC" value="Disabled" locked="false"/>
                   <setting id="FTM1_CGC" value="Disabled" locked="false"/>
                   <setting id="FTM2_CGC" value="Disabled" locked="false"/>
@@ -251,8 +253,20 @@
                   <data type="Version">1.0.0</data>
                </feature>
             </dependency>
+            <dependency resourceType="SWComponent" resourceId="platform.driver.flexcan" description="工具链/IDE工程中未找到FLEXCAN Driver。工程不会被编译！" problem_level="2" source="Peripherals">
+               <feature name="enabled" evaluation="equal">
+                  <data type="Boolean">true</data>
+               </feature>
+            </dependency>
+            <dependency resourceType="SWComponent" resourceId="platform.driver.flexcan" description="工具链/IDE工程不支持FLEXCAN Driver版本。所需值: ${required_value}, 实际值: ${actual_value}. 工程可能没有被正确编译。" problem_level="1" source="Peripherals">
+               <feature name="version" evaluation="equivalent">
+                  <data type="Version">1.0.0</data>
+               </feature>
+            </dependency>
          </dependencies>
          <generated_project_files>
+            <file path="board/peripherals_flexcan_config_1.c" update_enabled="true"/>
+            <file path="board/peripherals_flexcan_config_1.h" update_enabled="true"/>
             <file path="board/peripherals_lpuart_1.c" update_enabled="true"/>
             <file path="board/peripherals_lpuart_1.h" update_enabled="true"/>
             <file path="board/peripherals_osif_1.c" update_enabled="true"/>
@@ -287,6 +301,34 @@
                               <setting name="txDMAChannel" value="0"/>
                            </struct>
                         </array>
+                     </config_set>
+                  </instance>
+                  <instance name="flexcan_config_1" uuid="45beecbb-0d12-414c-9132-13f9efa874c3" type="flexcan_config" type_id="flexcan" mode="general" peripheral="CAN2" enabled="true" comment="" custom_name_enabled="false" editing_lock="false">
+                     <config_set name="flexcan">
+                        <struct name="flexcanCfg">
+                           <setting name="name" value="flexcanInitConfig2"/>
+                           <setting name="readonly" value="true"/>
+                           <setting name="flexcan_cfg_flexcanMode" value="FLEXCAN_NORMAL_MODE"/>
+                           <setting name="flexcan_cfg_fd_enable" value="false"/>
+                           <setting name="flexcan_cfg_payload" value="FLEXCAN_PAYLOAD_SIZE_8"/>
+                           <setting name="flexcan_cfg_max_num_mb" value="16"/>
+                           <setting name="flexcan_cfg_num_id_filters" value="FLEXCAN_RX_FIFO_ID_FILTERS_8"/>
+                           <setting name="flexcan_cfg_is_rx_fifo_needed" value="false"/>
+                           <setting name="flexcan_cfg_transfer_type" value="FLEXCAN_RXFIFO_USING_INTERRUPTS"/>
+                           <setting name="flexcan_cfg_rxFifoDMAChannel" value="0"/>
+                           <setting name="flexcan_cfg_pe_clock" value="FLEXCAN_CLK_SOURCE_OSC"/>
+                           <setting name="flexcan_bitrate2ts" value="false"/>
+                           <struct name="flexcan_cfg_time_segments1">
+                              <struct name="flexcan_cfg_bitrate">
+                                 <setting name="flexcan_cfg_propSeg" value="5"/>
+                                 <setting name="flexcan_cfg_phaseSeg1" value="6"/>
+                                 <setting name="flexcan_cfg_phaseSeg2" value="1"/>
+                                 <setting name="flexcan_cfg_preDivider" value="0"/>
+                                 <setting name="flexcan_cfg_rJumpwidth" value="1"/>
+                              </struct>
+                           </struct>
+                        </struct>
+                        <setting name="flexcan_state_name" value="flexcanState2"/>
                      </config_set>
                   </instance>
                </instances>

@@ -42,6 +42,7 @@ outputs:
 - {id: FIRCDIV1_CLK.outFreq, value: 48 MHz}
 - {id: FIRCDIV2_CLK.outFreq, value: 48 MHz}
 - {id: FLASH_CLK.outFreq, value: 20 MHz}
+- {id: FLEXCAN2_CLK.outFreq, value: 80 MHz}
 - {id: FTFC0_CLK.outFreq, value: 20 MHz}
 - {id: LPO_1K_CLK.outFreq, value: 1 kHz}
 - {id: LPO_CLK.outFreq, value: 128 kHz}
@@ -75,7 +76,6 @@ settings:
 - {id: EWM_CGC, value: Disabled}
 - {id: FLEXCAN0_CGC, value: Disabled}
 - {id: FLEXCAN1_CGC, value: Disabled}
-- {id: FLEXCAN2_CGC, value: Disabled}
 - {id: FTM0_CGC, value: Disabled}
 - {id: FTM1_CGC, value: Disabled}
 - {id: FTM2_CGC, value: Disabled}
@@ -147,6 +147,13 @@ peripheral_clock_config_t peripheralClockConfig0[NUM_OF_PERIPHERAL_CLOCKS_0] = {
     },
     {
         .clockName = RTC0_CLK,
+        .clkGate = true,
+        .clkSrc = CLK_SRC_OFF,
+        .frac = MULTIPLY_BY_ONE,
+        .divider = DIVIDE_BY_ONE,
+    },
+    {
+        .clockName = FlexCAN2_CLK,
         .clkGate = true,
         .clkSrc = CLK_SRC_OFF,
         .frac = MULTIPLY_BY_ONE,

@@ -1,6 +1,7 @@
 #include "sdk_project_config.h"
 #include "osif.h"          // 添加 OSIF 头文件，提供 OSIF_TimeDelay
 #include "lpuart_driver.h" // LPUART 驱动头文件
+#include "flexcan_driver.h" // FlexCAN 驱动头文件
 #include <stdio.h>
 
 /* ===== 根据你的硬件实际连接，直接定义引脚 ===== */
@@ -21,6 +22,16 @@ static const uint8_t bootMsg[] =
     "========================================\r\n\r\n";
 /* ===================================== */
 
+/* ========== CAN 发送业务代码 ========== */
+#define CAN_TX_MB_IDX    0U
+static flexcan_data_info_t canTxInfo = {
+    .msg_id_type = FLEXCAN_MSG_ID_STD,
+    .data_length = 8U,
+    .is_remote   = false,
+};
+static uint8_t canTxData[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+/* ===================================== */
+
 int main(void)
 {
 
@@ -39,10 +50,15 @@ int main(void)
     LPUART_DRV_Init(INST_LPUART_1, &lpUartState1, &lpuart_1_InitConfig0);
     LPUART_DRV_SendDataPolling(1U, bootMsg, sizeof(bootMsg) - 1U);
 
+    /* 5. 初始化 FlexCAN2 并配置发送邮箱 */
+    FLEXCAN_DRV_Init(INST_FLEXCAN_CONFIG_1, &flexcanState2, &flexcanInitConfig2);
+    FLEXCAN_DRV_ConfigTxMb(INST_FLEXCAN_CONFIG_1, CAN_TX_MB_IDX, &canTxInfo, 0x123U);
+
     for (;;)
     {
         OSIF_TimeDelay(1000);               // 延时 1000 毫秒，闪烁频率稳定，肉眼舒适
         PINS_DRV_TogglePins(LED0_PORT, 1u << LED0_PIN);
         PINS_DRV_TogglePins(LED1_PORT, 1u << LED1_PIN);
+        FLEXCAN_DRV_SendBlocking(INST_FLEXCAN_CONFIG_1, CAN_TX_MB_IDX, &canTxInfo, 0x123U, canTxData, 1000U);
     }
 }

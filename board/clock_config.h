@@ -34,7 +34,7 @@
 
 
 /*! @brief Count of peripheral clock user configuration 0*/
-#define NUM_OF_PERIPHERAL_CLOCKS_0                         8U /* Count of peripheral clock user configurations. */
+#define NUM_OF_PERIPHERAL_CLOCKS_0                         9U /* Count of peripheral clock user configurations. */
 
 /*! @brief User configuration structure 0*/
 extern clock_manager_user_config_t clockMan1_InitConfig0;

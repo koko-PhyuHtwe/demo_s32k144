@@ -1,0 +1,33 @@
+# ============================================
+# S32DS / Eclipse 工程 Git 忽略规则
+# 适用于 S32K144 最小系统空白模板
+# ============================================
+
+# ---- 编译产物 ----
+Debug_FLASH/
+Debug_RAM/
+*.o
+*.obj
+*.elf
+*.map
+*.siz
+*.d
+*.su
+*.lst
+
+# ---- 自动生成的 IDE 文件 ----
+.settings/language.settings.xml
+.settings/*.prefs
+.cproject.bak
+.project.bak
+
+# ---- 操作系统/编辑器临时文件 ----
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---- 备份文件 ----
+*.bak
+*.orig

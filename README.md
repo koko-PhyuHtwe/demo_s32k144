@@ -1,6 +1,6 @@
 # S32K144 最小系统模板
 
-S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外部晶振 + LED 闪烁 + OSIF 延时 + LPUART1 串口 + FlexCAN2 周期发送，可直接作为新工程的起点。
+S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外部晶振 + LED 闪烁 + OSIF 延时 + LPUART1 串口 + FlexCAN2 中断接收回复，代码已模块化封装，可直接作为新工程的起点。
 
 ---
 
@@ -56,49 +56,37 @@ S32 Design Studio (S32DS.3.4) 官方生成的最小系统模板，已配置外�
 | **SOSCDIV2_CLK** | 8 MHz | LPUART1 时钟源 |
 | **FIRCDIV1_CLK** | 48 MHz | CLKOUT、RTC 时钟源 |
 
-### 时钟模式
-
-| 模式 | 时钟源 | CORE_CLK | BUS_CLK |
-|------|--------|----------|---------|
-| **RUN** | SPLL | 80 MHz | 40 MHz |
-| **HSRUN** | SPLL | 80 MHz | 40 MHz |
-| **VLPR** | SIRC | 4 MHz | 4 MHz |
-
 ---
 
 ## 工程结构
 
 ```
 demo_s32k144/
-├── src/
-│   └── main.c                      ← 主程序（LED 闪烁 + 串口 + CAN 发送）
-├── board/                          ← 板级配置（S32 Config Tools 生成）
-│   ├── clock_config.c / .h         ← 时钟树配置（外部晶振 + SPLL）
-│   ├── pin_mux.c / .h              ← 引脚复用配置
-│   ├── peripherals_osif_1.c / .h   ← OSIF 外设配置
-│   ├── peripherals_lpuart_1.c / .h ← LPUART1 配置（变量定义，需手动 Init）
-│   ├── peripherals_flexcan_config_1.c / .h ← FlexCAN2 配置（变量定义，需手动 Init）
-│   └── sdk_project_config.h        ← SDK 统一头文件
-├── SDK/
-│   ├── platform/drivers/inc/       ← 驱动头文件
-│   │   ├── clock.h
-│   │   ├── interrupt_manager.h
-│   │   └── pins_driver.h
-│   └── rtos/osif/                  ← OSIF 驱动（裸机版）
-│       ├── osif.h
-│       └── osif_baremetal.c        ← 含 SysTick 1ms 中断实现
-├── Debug_Configurations/           ← J-Link / PEMicro 调试配置
-├── Doxygen/                        ← 文档生成配置
-├── .project / .cproject            ← S32DS Eclipse 工程文件
-├── demo_s32k144.mex                ← S32 Config Tools 配置文件
-└── README.md                       ← 本文件
+├── src/                               ← 用户应用代码（模块化）
+│   ├── main.c                         ← 主程序（初始化 + 主循环）
+│   ├── led.h / led.c                  ← LED 驱动模块
+│   ├── uart.h / uart.c                ← LPUART1 串口驱动模块
+│   └── can.h / can.c                  ← FlexCAN2 驱动模块（中断接收 + 非阻塞发送）
+├── board/                             ← 板级配置（S32 Config Tools 生成）
+│   ├── clock_config.c / .h            ← 时钟树配置（外部晶振 + SPLL）
+│   ├── pin_mux.c / .h                 ← 引脚复用配置
+│   ├── peripherals_osif_1.c / .h      ← OSIF 外设配置
+│   ├── peripherals_lpuart_1.c / .h    ← LPUART1 配置
+│   ├── peripherals_flexcan_config_1.c / .h ← FlexCAN2 配置
+│   └── sdk_project_config.h           ← SDK 统一头文件
+├── SDK/                               ← NXP SDK 驱动库
+│   ├── platform/drivers/inc/          ← 驱动头文件
+│   ├── platform/drivers/src/          ← 驱动源文件
+│   └── rtos/osif/                     ← OSIF 驱动（裸机版）
+├── Debug_Configurations/              ← J-Link / PEMicro 调试配置
+├── .project / .cproject               ← S32DS Eclipse 工程文件
+├── demo_s32k144.mex                   ← S32 Config Tools 配置文件
+└── README.md                          ← 本文件
 ```
 
 ---
 
-## 已配置好的基础设施
-
-### 引脚分配
+## 引脚分配
 
 | 引脚 | 功能 | 说明 |
 |------|------|------|
@@ -111,58 +99,36 @@ demo_s32k144/
 | **PTA4** | SWD_DIO | SWD 调试数据线，不可占用 |
 | **PTC4** | SWD_CLK | SWD 调试时钟线，不可占用 |
 
-### SysTick（1 ms 节拍）
+---
 
-通过 OSIF 裸机模块自动管理：
-- 首次调用 `OSIF_TimeDelay()` 时自动初始化 SysTick
-- `OSIF_GetMilliseconds()` 获取系统运行毫秒数
-- `SysTick_Handler` 在 `SDK/rtos/osif/osif_baremetal.c` 中实现
+## 模块说明
 
-### LPUART1 串口
+### LED 模块 (`led.h / led.c`)
+
+| 函数 | 功能 |
+|------|------|
+| `LED_Init()` | 初始化 LED，LED0 亮、LED1 灭 |
+| `LED_TurnOn(pin)` | 点亮指定 LED |
+| `LED_TurnOff(pin)` | 熄灭指定 LED |
+| `LED_Toggle(pin)` | 翻转指定 LED |
+| `LED_ToggleBoth()` | 同时翻转两个 LED（心跳指示） |
+
+### UART 模块 (`uart.h / uart.c`)
 
 | 参数 | 值 |
 |------|-----|
 | 实例 | LPUART1 |
-| 引脚 | PTC6 (RX) / PTC7 (TX) |
-| 时钟源 | SOSCDIV2 = 8 MHz（外部晶振分频） |
-| 时钟门控 | 已开启 |
 | 波特率 | 115200 |
 | 数据格式 | 8N1 |
 | 发送方式 | 轮询（`LPUART_DRV_SendDataPolling`） |
 
-上电后自动发送系统启动信息（时钟频率、串口参数），之后进入 LED 闪烁循环。
+| 函数 | 功能 |
+|------|------|
+| `UART_Init()` | 初始化 LPUART1 |
+| `UART_SendData(data, len)` | 轮询发送数据 |
+| `UART_SendBootMessage()` | 发送系统启动信息 |
 
-### FlexCAN2 控制器
-
-| 参数 | 值 |
-|------|-----|
-| 实例 | FlexCAN2 |
-| 引脚 | PTC16 (RX) / PTC17 (TX) |
-| 时钟源 | OSC = 8 MHz（外部晶振） |
-| 时钟门控 | 已开启 |
-| 工作模式 | Normal 模式 |
-| 帧格式 | 标准帧（11 位 ID） |
-| 数据长度 | 8 字节 |
-| 发送方式 | 阻塞（`FLEXCAN_DRV_SendBlocking`，轮询等待） |
-
-主循环中每秒发送一帧：
-- ID：`0x123`（标准帧）
-- 数据：`11 22 33 44 55 66 77 88`
-- 周期：约 1 秒（与 LED 闪烁同步）
-
----
-
-## main.c 功能说明
-
-当前程序实现了 LED 闪烁 + 串口上电打印 + CAN 周期发送功能：
-
-1. 初始化时钟、引脚
-2. LED0 亮，LED1 灭
-3. 初始化 LPUART1，轮询发送系统启动信息
-4. 初始化 FlexCAN2，配置 MB0 为发送邮箱
-5. 主循环：每秒翻转 LED + 发送一帧 CAN 报文
-
-串口输出示例：
+上电后串口输出：
 ```
 ========================================
   S32K144 System Boot
@@ -173,9 +139,80 @@ demo_s32k144/
 ========================================
 ```
 
-CAN 发送示例：
+### CAN 模块 (`can.h / can.c`)
+
+| 参数 | 值 |
+|------|-----|
+| 实例 | FlexCAN2 |
+| PE 时钟源 | OSC = 8 MHz |
+| 工作模式 | Normal |
+| 波特率 | 500 kbps |
+| 采样点 | 87.5% |
+| 帧格式 | 标准帧（11 位 ID） |
+
+**邮箱分配：**
+
+| 邮箱 | 方向 | ID | 说明 |
+|------|------|----|------|
+| M0 | 发送 | 0x123 | 回复数据 |
+| M1 | 接收 | 0x7E0 | 接收 CAN 卡数据（ID 过滤） |
+
+**波特率计算：**
+```
+TQ 总数 = 1(SYNC) + (PROPSEG+1) + (PSEG1+1) + (PSEG2+1)
+         = 1 + 6 + 7 + 2 = 16
+Bit Rate = 8MHz / (0+1) / 16 = 500,000 bps
+采样点   = (1+6+7) / 16 = 87.5%
+```
+
+**工作流程（中断驱动）：**
+```
+CAN 卡发送 ID=0x7E0 → M1 接收（硬件 ID 过滤）
+                              ↓
+                    触发 MB 中断 → 回调函数
+                              ↓
+              回调中：1) 非阻塞发送回复 ID=0x123
+                      2) 重新启动 M1 接收
+                              ↓
+                   等待下一帧接收...（循环）
+```
+
+**回复数据：**
 ```
 ID: 0x123  DLC: 8  Data: 11 22 33 44 55 66 77 88
+```
+
+| 函数 | 功能 |
+|------|------|
+| `CAN_Init()` | 初始化 FlexCAN2，配置收发邮箱，启动中断接收 |
+| `CAN_SendMessage(id, data, len)` | 轮询发送 CAN 消息 |
+| `CAN_SendReply()` | 发送预设回复数据 |
+
+---
+
+## main.c 功能说明
+
+```c
+int main(void)
+{
+    /* 系统初始化 */
+    CLOCK_DRV_Init(...);       // 时钟
+    PINS_DRV_Init(...);        // 引脚
+
+    /* 外设初始化 */
+    LED_Init();                // LED
+    UART_Init();               // 串口
+    UART_SendBootMessage();    // 发送启动信息
+    CAN_Init();                // CAN（配置收发邮箱 + 启动中断接收）
+
+    /* 主循环 */
+    for (;;)
+    {
+        OSIF_TimeDelay(1000);  // 延时 1 秒
+        LED_ToggleBoth();      // LED 心跳闪烁
+        // CAN 通信由中断自动处理，无需主循环干预
+    }
+}
 ```
 
 ---
@@ -185,11 +222,12 @@ ID: 0x123  DLC: 8  Data: 11 22 33 44 55 66 77 88
 ### 1. 硬件准备
 
 - S32K144EVB-Q100 开发板（或自定义 S32K144 板）
-- 8 MHz 外部晶振（已配置，如使用内部时钟需修改 `clock_config.c`）
+- 8 MHz 外部晶振
 - J-Link / PEMicro 调试器
-- USB 供电（或 12V 适配器）
+- USB 供电
+- CAN 分析仪（如 PCAN-USB），波特率设为 500 kbps
 
-### 2. 用 S32DS 导入工程
+### 2. 导入工程
 
 ```
 File → Import → Existing Projects into Workspace
@@ -210,33 +248,21 @@ Project → Build Project
 | `Debug_FLASH` | Flash 调试（推荐，断电保存） |
 | `Debug_RAM` | RAM 调试（快速，不擦 Flash） |
 
-支持 **J-Link** 和 **PEMicro** 两种调试器。
+### 5. CAN 通信测试
 
----
-
-## 扩展新外设
-
-在 S32DS 中双击 `demo_s32k144.mex` → 打开 **S32 Configuration Tools**：
-
-| 想添加 | 操作步骤 |
-|--------|---------|
-| **LPUART 串口** | Pins 工具选择 LPUART TX/RX 引脚 → Clocks 工具使能 LPUART 时钟门控 → 代码生成 |
-| **FTM PWM** | Pins 工具选择 FTM 通道引脚 → Clocks 工具使能 FTM 时钟 |
-| **FlexCAN** | Peripherals 工具添加 CAN 组件 → 配置波特率 |
-| **GPIO 中断** | Pins 工具配置引脚为 GPIO + 中断使能 |
-| **SPI 通信** | Pins 工具配置 LPSPI 引脚 → Clocks 工具使能 LPSPI 时钟 |
-
-配置完成后点击 **Update Code**，工具会自动更新 `board/` 目录下的 `.c/.h` 文件。
+1. CAN 分析仪设置波特率 500 kbps
+2. CAN 分析仪发送：ID = 0x7E0，Data = 任意 8 字节
+3. MCU 收到后自动回复：ID = 0x123，Data = 11 22 33 44 55 66 77 88
 
 ---
 
 ## 注意事项
 
-1. **外部晶振**：本工程使用 8 MHz 外部晶振。如开发板使用其他频率晶振，需修改 `clock_config.c` 中 `soscConfig.freq` 并重新计算 SPLL 倍频。
-2. **内部时钟切换**：如无需外部晶振，可将 `soscConfig.initialize` 设为 `false`，并将系统时钟源改回 FIRC（48 MHz）。
+1. **外部晶振**：本工程使用 8 MHz 外部晶振。如使用其他频率，需修改 `clock_config.c` 中 `soscConfig.freq` 并重新计算 SPLL 倍频。
+2. **CAN 时钟**：FlexCAN2 的 PE 时钟由 `peripherals_flexcan_config_1.c` 中 `pe_clock = FLEXCAN_CLK_SOURCE_OSC` 指定（8 MHz），与 PCC 层的 `clkSrc` 无关。
 3. **不要手动修改 `board/` 目录下带 "This file was generated by..." 注释的文件**，否则下次用 Config Tools 更新时会被覆盖。
-4. **`.settings/language.settings.xml` 已加入 `.gitignore`**，换台电脑导入工程后 IDE 会自动重新生成。
-5. **OSIF 模式**：当前为裸机模式（默认，无需定义任何宏）。如需切换为 **FreeRTOS** 版本，在工程预处理符号中定义 `USING_OS_FREERTOS`，并将 OSIF 组件从 `osif_baremetal.c` 替换为 `osif_freertos.c`。
+4. **OSIF 模式**：当前为裸机模式。如需切换为 FreeRTOS，在预处理符号中定义 `USING_OS_FREERTOS`。
+5. **中断接收注意**：`FLEXCAN_DRV_Receive()` 必须在 `ConfigRxMb()` 之后调用，否则 MB 状态不是 `RX_BUSY`，中断不会触发回调。回调中需再次调用以恢复接收能力。
 
 ---
 

@@ -1,64 +1,52 @@
+/**
+ * @file    main.c
+ * @brief   主程序入口
+ * @details S32K144 演示程序：LED 闪烁 + UART 启动信息 + CAN 中断接收回复
+ */
+
 #include "sdk_project_config.h"
-#include "osif.h"          // 添加 OSIF 头文件，提供 OSIF_TimeDelay
-#include "lpuart_driver.h" // LPUART 驱动头文件
-#include "flexcan_driver.h" // FlexCAN 驱动头文件
-#include <stdio.h>
+#include "osif.h"
+#include "led.h"
+#include "uart.h"
+#include "can.h"
 
-/* ===== 根据你的硬件实际连接，直接定义引脚 ===== */
-#define LED0_PORT   PTD
-#define LED0_PIN    15
-#define LED1_PORT   PTD
-#define LED1_PIN    16
-/* ============================================ */
-
-/* ========== 串口发送业务代码 ========== */
-static const uint8_t bootMsg[] =
-    "\r\n========================================\r\n"
-    "  S32K144 System Boot\r\n"
-    "  CORE_CLK  = 80 MHz\r\n"
-    "  BUS_CLK   = 40 MHz\r\n"
-    "  FLASH_CLK = 20 MHz\r\n"
-    "  LPUART1   = 115200 8N1\r\n"
-    "========================================\r\n\r\n";
-/* ===================================== */
-
-/* ========== CAN 发送业务代码 ========== */
-#define CAN_TX_MB_IDX    0U
-static flexcan_data_info_t canTxInfo = {
-    .msg_id_type = FLEXCAN_MSG_ID_STD,
-    .data_length = 8U,
-    .is_remote   = false,
-};
-static uint8_t canTxData[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
-/* ===================================== */
-
+/**
+ * @brief  主函数
+ * @return 理论上不会返回
+ */
 int main(void)
 {
-
-
+    /* ===== 系统初始化 ===== */
+    
     /* 1. 初始化时钟 */
     CLOCK_DRV_Init(&clockMan1_InitConfig0);
-
-    /* 2. 初始化引脚（注意：pin_mux.c 里必须把 PTD15 和 PTD16 配成 GPIO 输出） */
+    
+    /* 2. 初始化引脚 */
     PINS_DRV_Init(NUM_OF_CONFIGURED_PINS0, g_pin_mux_InitConfigArr0);
-
-    /* 3. 初始状态：LED0 亮，LED1 灭（假设高电平点亮；若低电平点亮，把 Set/Clear 对调） */
-    PINS_DRV_SetPins(LED0_PORT, 1u << LED0_PIN);
-    PINS_DRV_ClearPins(LED1_PORT, 1u << LED1_PIN);
-
-    /* 4. 上电发送系统信息（轮询模式） */
-    LPUART_DRV_Init(INST_LPUART_1, &lpUartState1, &lpuart_1_InitConfig0);
-    LPUART_DRV_SendDataPolling(1U, bootMsg, sizeof(bootMsg) - 1U);
-
-    /* 5. 初始化 FlexCAN2 并配置发送邮箱 */
-    FLEXCAN_DRV_Init(INST_FLEXCAN_CONFIG_1, &flexcanState2, &flexcanInitConfig2);
-    FLEXCAN_DRV_ConfigTxMb(INST_FLEXCAN_CONFIG_1, CAN_TX_MB_IDX, &canTxInfo, 0x123U);
-
+    
+    /* ===== 外设初始化 ===== */
+    
+    /* 3. 初始化 LED */
+    LED_Init();
+    
+    /* 4. 初始化 UART 并发送启动信息 */
+    UART_Init();
+    UART_SendBootMessage();
+    
+    /* 5. 初始化 CAN（配置发送邮箱 M0 + 接收邮箱 M1，开启中断） */
+    CAN_Init();
+    
+    /* ===== 主循环 ===== */
     for (;;)
     {
-        OSIF_TimeDelay(1000);               // 延时 1000 毫秒，闪烁频率稳定，肉眼舒适
-        PINS_DRV_TogglePins(LED0_PORT, 1u << LED0_PIN);
-        PINS_DRV_TogglePins(LED1_PORT, 1u << LED1_PIN);
-        FLEXCAN_DRV_SendBlocking(INST_FLEXCAN_CONFIG_1, CAN_TX_MB_IDX, &canTxInfo, 0x123U, canTxData, 1000U);
+        /* 延时 1 秒 */
+        OSIF_TimeDelay(1000);
+        
+        /* 翻转 LED 状态（心跳指示） */
+        LED_ToggleBoth();
+        
+        /* CAN 发送已改为中断模式：
+         * CAN 卡发送 ID=0x7E0 → M1 接收 → 触发中断 → M0 回复 ID=0x123
+         */
     }
 }

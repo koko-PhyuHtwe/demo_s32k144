@@ -44,6 +44,19 @@ void UART_SendData(const uint8_t *data, uint32_t len)
 }
 
 /**
+ * @brief  发送字符串
+ * @param  str: 字符串指针
+ */
+void UART_SendString(const char *str)
+{
+    uint32_t len = 0U;
+    while (str[len] != '\0') {
+        len++;
+    }
+    LPUART_DRV_SendDataPolling(UART_INSTANCE, (const uint8_t *)str, len);
+}
+
+/**
  * @brief  发送启动信息
  */
 void UART_SendBootMessage(void)

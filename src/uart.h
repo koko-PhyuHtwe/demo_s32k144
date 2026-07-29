@@ -26,6 +26,12 @@ void UART_Init(void);
 void UART_SendData(const uint8_t *data, uint32_t len);
 
 /**
+ * @brief  发送字符串（以 \0 结尾）
+ * @param  str: 字符串指针
+ */
+void UART_SendString(const char *str);
+
+/**
  * @brief  发送启动信息（ASCII 字符）
  */
 void UART_SendBootMessage(void);

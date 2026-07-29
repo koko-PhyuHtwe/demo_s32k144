@@ -10,6 +10,7 @@
 #include "uart.h"
 #include "can.h"
 #include "uds.h"
+#include "flash_app.h"
 
 /**
  * @brief  主函数
@@ -36,8 +37,11 @@ int main(void)
     
     /* 5. 初始化 CAN（配置发送邮箱 M0 + 接收邮箱 M1，开启中断） */
     CAN_Init();
-    
-    /* 6. 初始化 UDS 诊断服务 */
+
+    /* 6. 初始化 Flash 驱动 */
+    FlashApp_Init();
+
+    /* 7. 初始化 UDS 诊断服务 */
     UDS_Init();
     
     /* ===== 主循环 ===== */

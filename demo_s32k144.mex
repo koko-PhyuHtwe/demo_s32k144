@@ -263,8 +263,20 @@
                   <data type="Version">1.0.0</data>
                </feature>
             </dependency>
+            <dependency resourceType="SWComponent" resourceId="platform.driver.flash" description="工具链/IDE工程中未找到FLASH Driver。工程不会被编译！" problem_level="2" source="Peripherals">
+               <feature name="enabled" evaluation="equal">
+                  <data type="Boolean">true</data>
+               </feature>
+            </dependency>
+            <dependency resourceType="SWComponent" resourceId="platform.driver.flash" description="工具链/IDE工程不支持FLASH Driver版本。所需值: ${required_value}, 实际值: ${actual_value}. 工程可能没有被正确编译。" problem_level="1" source="Peripherals">
+               <feature name="version" evaluation="equivalent">
+                  <data type="Version">1.0.0</data>
+               </feature>
+            </dependency>
          </dependencies>
          <generated_project_files>
+            <file path="board/peripherals_flash_1.c" update_enabled="true"/>
+            <file path="board/peripherals_flash_1.h" update_enabled="true"/>
             <file path="board/peripherals_flexcan_config_1.c" update_enabled="true"/>
             <file path="board/peripherals_flexcan_config_1.h" update_enabled="true"/>
             <file path="board/peripherals_lpuart_1.c" update_enabled="true"/>
@@ -329,6 +341,21 @@
                            </struct>
                         </struct>
                         <setting name="flexcan_state_name" value="flexcanState2"/>
+                     </config_set>
+                  </instance>
+                  <instance name="flash_1" uuid="4e9927c8-385e-4797-b891-5feb0d60fa55" type="flash" type_id="flash" mode="general" peripheral="FTFC" enabled="true" comment="" custom_name_enabled="false" editing_lock="false">
+                     <config_set name="flash_driver" quick_selection="flash_default">
+                        <array name="flashConfig">
+                           <struct name="0">
+                              <setting name="Configuration" value="Flash_InitConfig0"/>
+                              <setting name="readOnly" value="true"/>
+                              <setting name="PFlashBase" value="0x00000000"/>
+                              <setting name="PFlashSize" value="0x80000"/>
+                              <setting name="DFlashBase" value="0x10000000"/>
+                              <setting name="EERAMBase" value="0x14000000"/>
+                              <setting name="CallBack" value="NULL_CALLBACK"/>
+                           </struct>
+                        </array>
                      </config_set>
                   </instance>
                </instances>

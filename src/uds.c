@@ -7,13 +7,30 @@
 
 #include "uds.h"
 #include "can.h"
+#include "flash_app.h"
 
 /* ==================== 内部函数声明 ==================== */
 static void UDS_HandleSessionControl(const can_frame_t *frame);
 static void UDS_HandleECUReset(const can_frame_t *frame);
 static void UDS_HandleReadDID(const can_frame_t *frame);
+static void UDS_HandleRequestDownload(const can_frame_t *frame);
+static void UDS_HandleTransferData(const can_frame_t *frame);
+static void UDS_HandleRequestTransferExit(const can_frame_t *frame);
 static void UDS_SendPositiveResponse(uint8_t sid, const uint8_t *payload, uint8_t payloadLen);
 static void UDS_SendNegativeResponse(uint8_t sid, uint8_t nrc);
+
+/* ==================== 下载状态管理 ==================== */
+typedef enum {
+    DOWNLOAD_IDLE,         /* 空闲，没有下载 */
+    DOWNLOAD_IN_PROGRESS    /* 下载进行中 */
+} download_state_t;
+
+static download_state_t downloadState     = DOWNLOAD_IDLE;
+static uint32_t downloadAddr              = 0U;   /* 当前写入地址 */
+static uint32_t downloadTotalSize         = 0U;   /* 总大小 */
+static uint8_t  blockCounter              = 1U;    /* 期望的块序号 */
+static uint8_t  dataBuffer[8];                    /* 数据缓存（攒8字节写一次） */
+static uint8_t  dataBufferIndex           = 0U;   /* 缓存当前字节数 */
 
 /* ==================== 公共接口 ==================== */
 
@@ -59,6 +76,18 @@ void UDS_Process(void)
 
         case UDS_SID_READ_DID:
             UDS_HandleReadDID(&frame);
+            break;
+
+        case UDS_SID_REQUEST_DOWNLOAD:
+            UDS_HandleRequestDownload(&frame);
+            break;
+
+        case UDS_SID_TRANSFER_DATA:
+            UDS_HandleTransferData(&frame);
+            break;
+
+        case UDS_SID_REQUEST_TRANSFER_EXIT:
+            UDS_HandleRequestTransferExit(&frame);
             break;
 
         default:
@@ -170,6 +199,179 @@ static void UDS_HandleReadDID(const can_frame_t *frame)
     payload[5] = '0';
 
     UDS_SendPositiveResponse(UDS_SID_READ_DID, payload, 6);
+}
+
+/* ==================== 下载服务实现 ==================== */
+
+/**
+ * @brief  处理 0x34 请求下载
+ * @note   请求格式：
+ *         data[0] = PCI
+ *         data[1] = 0x34 (SID)
+ *         data[2] = 地址高字节
+ *         data[3] = 地址次高字节
+ *         data[4] = 地址次低字节
+ *         data[5] = 地址低字节
+ *         data[6] = 大小高字节
+ *         data[7] = 大小低字节
+ *         正响应：03 74 20 04
+ */
+static void UDS_HandleRequestDownload(const can_frame_t *frame)
+{
+    uint8_t pci     = frame->data[0];
+    uint8_t dataLen = pci & 0x0FU;
+
+    /* 校验长度：至少 7 字节（SID + 4字节地址 + 2字节大小） */
+    if (dataLen < 7U) {
+        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_INVALID_MESSAGE_LENGTH);
+        return;
+    }
+
+    /* 解析下载地址（4字节，大端）和大小（2字节，大端） */
+    uint32_t addr = ((uint32_t)frame->data[2] << 24) |
+                    ((uint32_t)frame->data[3] << 16) |
+                    ((uint32_t)frame->data[4] << 8)  |
+                    ((uint32_t)frame->data[5]);
+    uint16_t size = ((uint16_t)frame->data[6] << 8) | frame->data[7];
+
+    /* 地址安全检查：不能写 Bootloader 区域 */
+    if (addr < APP_FLASH_BASE) {
+        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_REQUEST_OUT_OF_RANGE);
+        return;
+    }
+    if ((addr + size) > APP_FLASH_END) {
+        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_REQUEST_OUT_OF_RANGE);
+        return;
+    }
+    if (size == 0U) {
+        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_REQUEST_OUT_OF_RANGE);
+        return;
+    }
+
+    /* 擦除目标区域 */
+    uint8_t result = FlashApp_Erase(addr, (uint32_t)size);
+    if (result != 0U) {
+        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
+        return;
+    }
+
+    /* 初始化下载状态 */
+    downloadState    = DOWNLOAD_IN_PROGRESS;
+    downloadAddr     = addr;
+    downloadTotalSize = (uint32_t)size;
+    blockCounter     = 1U;
+    dataBufferIndex  = 0U;
+
+    /* 构造正响应：数据格式标识 + 地址长度 + 每块最大字节数 */
+    uint8_t payload[3];
+    payload[0] = 0x20U;  /* 数据格式：不压缩 */
+    payload[1] = 0x04U; /* 地址长度=4字节 */
+    payload[2] = 0x04U; /* 每块最大数据长度=4字节 */
+
+    UDS_SendPositiveResponse(UDS_SID_REQUEST_DOWNLOAD, payload, 3);
+}
+
+/**
+ * @brief  处理 0x36 传输数据
+ * @note   请求格式：
+ *         data[0] = PCI
+ *         data[1] = 0x36 (SID)
+ *         data[2] = BlockNumber (序号，从1开始)
+ *         data[3..6] = 4字节数据
+ *         正响应：02 76 <BlockNumber>
+ */
+static void UDS_HandleTransferData(const can_frame_t *frame)
+{
+    uint8_t pci          = frame->data[0];
+    uint8_t dataLen      = pci & 0x0FU;
+    uint8_t recvBlockNum = frame->data[2];
+
+    /* 检查是否在下载状态 */
+    if (downloadState != DOWNLOAD_IN_PROGRESS) {
+        UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_REQUEST_SEQUENCE_ERROR);
+        return;
+    }
+
+    /* 检查块序号是否正确 */
+    if (recvBlockNum != blockCounter) {
+        UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_WRONG_BLOCK_SEQUENCE);
+        return;
+    }
+
+    /* 提取数据（data[3]开始，最多4字节） */
+    /* 校验最小长度：至少 SID + BlockNumber = 2 字节 */
+    if (dataLen < 2U) {
+        UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_INVALID_MESSAGE_LENGTH);
+        return;
+    }
+    uint8_t recvDataLen = dataLen - 2U;  /* 减去 SID 和 BlockNumber */
+    if (recvDataLen > 4U) {
+        recvDataLen = 4U;
+    }
+
+    /* 把数据放入缓存 */
+    for (uint8_t i = 0U; i < recvDataLen; i++) {
+        dataBuffer[dataBufferIndex++] = frame->data[3U + i];
+    }
+
+    /* 攒满 8 字节，写一次 Flash */
+    if (dataBufferIndex >= 8U) {
+        uint8_t result = FlashApp_Write(downloadAddr, dataBuffer, 8U);
+        if (result != 0U) {
+            UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
+            downloadState = DOWNLOAD_IDLE;
+            return;
+        }
+        downloadAddr += 8U;
+        dataBufferIndex = 0U;
+    }
+
+    /* 块序号 +1（0xFF 后绕回 1） */
+    blockCounter++;
+    if (blockCounter == 0U) {
+        blockCounter = 1U;
+    }
+
+    /* 回复正响应 */
+    uint8_t payload[1];
+    payload[0] = recvBlockNum;
+
+    UDS_SendPositiveResponse(UDS_SID_TRANSFER_DATA, payload, 1);
+}
+
+/**
+ * @brief  处理 0x37 退出传输
+ * @note   如果缓存里还有不足 8 字节的数据，补 0xFF 后写入
+ *         正响应：01 77
+ */
+static void UDS_HandleRequestTransferExit(const can_frame_t *frame)
+{
+    (void)frame;  /* 0x37 请求不需要额外参数 */
+
+    /* 检查是否在下载状态 */
+    if (downloadState != DOWNLOAD_IN_PROGRESS) {
+        UDS_SendNegativeResponse(UDS_SID_REQUEST_TRANSFER_EXIT, UDS_NRC_REQUEST_SEQUENCE_ERROR);
+        return;
+    }
+
+    /* 处理剩余数据（不足 8 字节，补 0xFF 到 8 字节写入） */
+    if (dataBufferIndex > 0U) {
+        for (uint8_t i = dataBufferIndex; i < 8U; i++) {
+            dataBuffer[i] = 0xFFU;
+        }
+        uint8_t result = FlashApp_Write(downloadAddr, dataBuffer, 8U);
+        if (result != 0U) {
+            UDS_SendNegativeResponse(UDS_SID_REQUEST_TRANSFER_EXIT, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
+            downloadState = DOWNLOAD_IDLE;
+            return;
+        }
+    }
+
+    /* 下载完成，回到空闲状态 */
+    downloadState = DOWNLOAD_IDLE;
+
+    /* 回复正响应（无额外数据） */
+    UDS_SendPositiveResponse(UDS_SID_REQUEST_TRANSFER_EXIT, NULL, 0);
 }
 
 /* ==================== 内部辅助函数 ==================== */

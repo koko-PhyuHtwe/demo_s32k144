@@ -8,6 +8,7 @@
 #define CAN_H
 
 #include "sdk_project_config.h"
+#include <string.h>
 
 /* CAN 实例 ID 和邮箱配置 */
 #define CAN_INSTANCE        INST_FLEXCAN_CONFIG_1  /* FlexCAN2 */
@@ -20,6 +21,17 @@
 
 /* CAN 接收 ID 过滤 */
 #define CAN_RX_ID           0x7E0U                 /* CAN 卡发送的 ID */
+
+/* 环形队列深度（能缓存多少帧 CAN 数据） */
+#define CAN_RX_QUEUE_SIZE   16U
+
+/* 统一的 CAN 帧结构体（用于队列存储） */
+typedef struct {
+    uint32_t id;    /* CAN 消息 ID */
+    uint8_t  dlc;   /* 数据长度 (0-8) */
+    uint8_t  data[8]; /* 数据内容 */
+} can_frame_t;
+
 
 /**
  * @brief  CAN 初始化
@@ -35,9 +47,8 @@ void CAN_Init(void);
  */
 void CAN_SendMessage(uint32_t id, const uint8_t *data, uint8_t len);
 
-/**
- * @brief  发送回复数据（ID=0x123, 8字节数据）
- */
-void CAN_SendReply(void);
+/* 新增：环形队列 API */
+uint8_t CAN_RxAvailable(void);           /* 队列中是否有数据 */
+void CAN_GetRxFrame(can_frame_t *frame); /* 从队列读取一帧 */
 
 #endif /* CAN_H */

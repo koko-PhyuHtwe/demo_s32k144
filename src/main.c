@@ -1,7 +1,7 @@
 /**
  * @file    main.c
  * @brief   主程序入口
- * @details S32K144 演示程序：LED 闪烁 + UART 启动信息 + CAN 中断接收回复
+ * @details S32K144 Bootloader：LED 心跳 + UART 启动信息 + CAN 中断接收 + UDS 诊断
  */
 
 #include "sdk_project_config.h"
@@ -9,6 +9,7 @@
 #include "led.h"
 #include "uart.h"
 #include "can.h"
+#include "uds.h"
 
 /**
  * @brief  主函数
@@ -36,17 +37,19 @@ int main(void)
     /* 5. 初始化 CAN（配置发送邮箱 M0 + 接收邮箱 M1，开启中断） */
     CAN_Init();
     
+    /* 6. 初始化 UDS 诊断服务 */
+    UDS_Init();
+    
     /* ===== 主循环 ===== */
     for (;;)
     {
+        /* UDS 处理（内部检查队列，有数据才解析） */
+        UDS_Process();
+        
         /* 延时 1 秒 */
         OSIF_TimeDelay(1000);
         
         /* 翻转 LED 状态（心跳指示） */
         LED_ToggleBoth();
-        
-        /* CAN 发送已改为中断模式：
-         * CAN 卡发送 ID=0x7E0 → M1 接收 → 触发中断 → M0 回复 ID=0x123
-         */
     }
 }

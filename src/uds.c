@@ -63,6 +63,7 @@ static void NVIC_SystemReset(void)
 static void UDS_HandleSessionControl(const can_frame_t *frame);
 static void UDS_HandleECUReset(const can_frame_t *frame);
 static void UDS_HandleReadDID(const can_frame_t *frame);
+static void UDS_HandleWriteDID(const can_frame_t *frame);
 static void UDS_HandleRequestDownload(const can_frame_t *frame);
 static void UDS_HandleTransferData(const can_frame_t *frame);
 static void UDS_HandleRequestTransferExit(const can_frame_t *frame);
@@ -76,6 +77,7 @@ typedef enum {
 } download_state_t;
 
 static download_state_t downloadState     = DOWNLOAD_IDLE;
+static uint32_t downloadStartAddr          = 0U;   /* 下载起始地址（保存供 CRC 校验） */
 static uint32_t downloadAddr              = 0U;   /* 当前写入地址 */
 static uint32_t downloadTotalSize         = 0U;   /* 总大小 */
 static uint8_t  blockCounter              = 1U;    /* 期望的块序号 */
@@ -134,6 +136,10 @@ void UDS_Process(void)
 
         case UDS_SID_READ_DID:
             UDS_HandleReadDID(&frame);
+            break;
+
+        case UDS_SID_WRITE_DID:
+            UDS_HandleWriteDID(&frame);
             break;
 
         case UDS_SID_REQUEST_DOWNLOAD:
@@ -261,6 +267,80 @@ static void UDS_HandleReadDID(const can_frame_t *frame)
     UDS_SendPositiveResponse(UDS_SID_READ_DID, payload, 6);
 }
 
+/**
+ * @brief  处理 0x2E 写 DID（用于 CRC32 校验）
+ * @note   请求格式（DID 0xFF01）：
+ *         data[0] = PCI = 0x06（6 字节数据）
+ *         data[1] = 0x2E (SID)
+ *         data[2] = 0xFF (DID 高字节)
+ *         data[3] = 0x01 (DID 低字节)
+ *         data[4] = CRC[31:24]
+ *         data[5] = CRC[23:16]
+ *         data[6] = CRC[15:8]
+ *         data[7] = CRC[7:0]
+ *
+ *         正响应：04 6E FF 01 00  （末位 0=校验通过）
+ *         否定响应：NRC=0x72 校验失败 / NRC=0x31 不支持的 DID
+ */
+static void UDS_HandleWriteDID(const can_frame_t *frame)
+{
+    uint8_t pci     = frame->data[0];
+    uint8_t dataLen = pci & 0x0FU;
+
+    /* 校验长度：SID + 2字节DID + 4字节CRC = 7 字节 */
+    if (dataLen != 7U) {
+        UDS_SendNegativeResponse(UDS_SID_WRITE_DID, UDS_NRC_INVALID_MESSAGE_LENGTH);
+        return;
+    }
+
+    /* 提取 DID */
+    uint16_t did = ((uint16_t)frame->data[2] << 8) | frame->data[3];
+
+    /* 只支持 DID 0xFF01（CRC32 校验请求） */
+    if (did != UDS_DID_CRC32) {
+        UDS_SendNegativeResponse(UDS_SID_WRITE_DID, UDS_NRC_REQUEST_OUT_OF_RANGE);
+        return;
+    }
+
+    /* 检查是否已下载完成（必须有 downloadTotalSize > 0 才能校验） */
+    if (downloadState != DOWNLOAD_IDLE || downloadTotalSize == 0U) {
+        UDS_SendNegativeResponse(UDS_SID_WRITE_DID, UDS_NRC_REQUEST_SEQUENCE_ERROR);
+        return;
+    }
+
+    /* 提取上位机给的 CRC32（大端） */
+    uint32_t expectedCrc = ((uint32_t)frame->data[4] << 24) |
+                           ((uint32_t)frame->data[5] << 16) |
+                           ((uint32_t)frame->data[6] << 8)  |
+                           ((uint32_t)frame->data[7]);
+
+    /* 计算 Flash 区域的 CRC32（downloadStartAddr 在 0x34 中保存） */
+    uint32_t actualCrc = FlashApp_CalcCRC32(downloadStartAddr, downloadTotalSize);
+
+    if (actualCrc != expectedCrc) {
+        /* CRC 不一致，校验失败，不跳 App */
+        UDS_SendNegativeResponse(UDS_SID_WRITE_DID, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
+        UART_SendString("CRC FAIL\r\n");
+        return;
+    }
+
+    /* CRC 一致，校验通过 */
+    UART_SendString("CRC OK\r\n");
+
+    /* 正响应：DID + status(0=pass) */
+    uint8_t payload[3];
+    payload[0] = (uint8_t)(did >> 8);
+    payload[1] = (uint8_t)(did & 0xFFU);
+    payload[2] = 0x00U;  /* status = 0 表示成功 */
+
+    UDS_SendPositiveResponse(UDS_SID_WRITE_DID, payload, 3);
+
+    /* CRC 校验通过，延时后跳转到 App */
+    UART_SendString("Jumping to App...\r\n");
+    OSIF_TimeDelay(100);
+    Jump_To_App();
+}
+
 /* ==================== 下载服务实现 ==================== */
 
 /**
@@ -317,6 +397,7 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
 
     /* 初始化下载状态 */
     downloadState    = DOWNLOAD_IN_PROGRESS;
+    downloadStartAddr = addr;   /* 保存下载起始地址供 CRC 校验 */
     downloadAddr     = addr;
     downloadTotalSize = (uint32_t)size;
     blockCounter     = 1U;
@@ -435,10 +516,8 @@ static void UDS_HandleRequestTransferExit(const can_frame_t *frame)
     /* 回复正响应（无额外数据） */
     UDS_SendPositiveResponse(UDS_SID_REQUEST_TRANSFER_EXIT, NULL, 0);
 
-    /* 升级完成，延时后跳转到新 App */
-    UART_SendString("Upgrade done, jumping to App...\r\n");
-    OSIF_TimeDelay(100);  /* 等 100ms 让上位机收到响应 */
-    Jump_To_App();
+    /* 升级完成，等待上位机发送 0x2E 做 CRC32 校验后再跳 App */
+    UART_SendString("Upgrade done, waiting for CRC32 check...\r\n");
 }
 
 /* ==================== 内部辅助函数 ==================== */

@@ -2,7 +2,7 @@
 
 基于 S32 Design Studio (S32DS.3.4) + S32K144 (Cortex-M4F) 的 CAN Bootloader 开发工程。
 
-当前阶段：**Boot 模式选择**（v0.6 完成）。
+当前阶段：**固件 CRC32 校验**（v0.6 完成）。
 
 ---
 
@@ -16,6 +16,7 @@
 | v0.4 | **Flash 驱动集成 + UDS 0x34/0x36/0x37 下载链路** | ✅ 完成 | **flash-download** |
 | v0.5 | **超时保护 + 自动跳 App** | ✅ 完成 | **s3-timeout-jump** |
 | v0.6 | **Boot 模式选择（上电先跳 App）** | ✅ 完成 | **boot-mode-select** |
+| v0.7 | **固件 CRC32 校验（0x2E WriteDID）** | ✅ 完成 | **crc32-verify** |
 
 ---
 
@@ -249,9 +250,10 @@ CAN_Callback (ISR)
 | **0x10** | 会话控制 | 0x01 默认 / 0x03 扩展 | 诊断会话切换，重置 S3Server 计时器 |
 | **0x11** | ECU 复位 | 0x01 硬复位 | 延时 100ms 后执行系统复位（NVIC_SystemReset） |
 | **0x22** | 读 DID | 0xF189 版本号 | 读取软件版本字符串 "V1.0" |
+| **0x2E** | 写 DID | 0xFF01 CRC32 | 写入 CRC32 值，Bootloader 校验 Flash 数据完整性 |
 | **0x34** | 请求下载 | - | 擦除目标扇区，进入升级模式（禁止跳 App） |
 | **0x36** | 传输数据 | BlockNumber | 单帧传输 4 字节，攒满 8 字节写入 Flash |
-| **0x37** | 退出传输 | - | 完成下载，跳转到新 App |
+| **0x37** | 退出传输 | - | 完成下载，等待 0x2E CRC 校验后再跳 App |
 
 **S3Server 超时机制（v0.5）：**
 - 启动后 5 秒内无有效 UDS 请求 → 尝试跳 App
@@ -398,6 +400,32 @@ int main(void)
 | 25 | CAN 通信正常 | 上电后发 `02 10 03` | 收到 0x50 正响应 | ✅ |
 | 26 | 中断恢复 | 上电后多次超时检查 | CAN 中断持续正常工作 | ✅ |
 
+### v0.7 CRC32 校验测试
+
+**CRC32 算法：CRC-32/ISO-HDLC（与 zlib.crc32() 一致）**
+
+**测试数据：** `AA BB CC DD 11 22 33 44 55 66 77 88 99 AA BB CC`
+**计算方法：** Python `zlib.crc32(data) & 0xFFFFFFFF`
+
+| # | 场景 | 操作 | 期望回复 (ID=0x123) | 验证内容 | 状态 |
+|---|------|------|----------------------|----------|------|
+| 27 | CRC 校验通过 | 0x34→0x36×4→0x37→`07 2E FF 01 A3 4F 5A D0` | `04 6E FF 01 00 00 00 00` | CRC 正确，回复正响应 | ✅ |
+| 28 | CRC 校验失败 | 0x34→0x36×4→0x37→`07 2E FF 01 00 00 00 00` | `03 7F 2E 72 00 00 00 00` | CRC 错误，NRC=0x72 编程失败 | ✅ |
+| 29 | 序列错误 | 直接发 `07 2E FF 01 A3 4F 5A D0`（无 0x34/0x37） | `03 7F 2E 24 00 00 00 00` | NRC=0x24 请求序列错误 | ✅ |
+| 30 | 不支持的 DID | `07 2E F1 89 A3 4F 5A D0` | `03 7F 2E 31 00 00 00 00` | NRC=0x31 请求超出范围 | ✅ |
+
+**完整升级+CRC 流程：**
+```
+0x10 03                          扩展会话
+0x34 00 01 00 00 00 10           请求下载（addr=0x00010000, size=16）
+0x36 01 AA BB CC DD 00           传输#1
+0x36 02 11 22 33 44 00           传输#2
+0x36 03 55 66 77 88 00           传输#3
+0x36 04 99 AA BB CC 00           传输#4
+0x37 00 00 00 00 00 00           退出传输
+0x2E FF 01 A3 4F 5A D0           写 CRC32 → 校验 → 跳 App
+```
+
 ---
 
 ## 快速开始
@@ -452,14 +480,15 @@ git status
 git add -A
 
 # 4. 提交（阶段标记：v0.6 Boot 模式选择）
-git commit -m "feat: v0.6 Boot 模式选择（上电先跳 App）
-                 - main.c 调整初始化顺序：时钟/引脚/UART → Jump_To_App → CAN/Flash/UDS
-                 - 有合法 App 时上电直接跳转，不浪费时间等 5 秒
-                 - Jump_To_App 返回前恢复中断使能，确保 CAN 正常工作
-                 - 26 项测试全部通过"
+git commit -m "feat: v0.7 固件 CRC32 校验（UDS 0x2E WriteDID）
+                 - 新增 FlashApp_CalcCRC32()（CRC-32/ISO-HDLC 查表法）
+                 - 新增 UDS 0x2E 服务，DID 0xFF01 用于 CRC32 校验
+                 - 0x37 退出传输后不再直接跳 App，等 0x2E 校验通过
+                 - CRC 不一致返回 NRC=0x72，防止坏固件运行
+                 - 30 项测试全部通过"
 
 # 5. (可选) 打标签
-git tag -a v0.6-boot-mode-select -m "Boot 模式选择完成，上电先尝试跳 App"
+git tag -a v0.7-crc32-verify -m "固件 CRC32 校验完成"
 
 # 6. (可选) 推送到远程仓库
 git push origin main
@@ -481,28 +510,29 @@ git push origin --tags
 9. **App 合法性**：MSP 必须在 SRAM (0x20000000~0x20010000)，PC 必须在 App Flash (0x00010000~0x0007FFFF)，否则留在 Bootloader。
 10. **NXP SDK 缺失 CMSIS**：S32K144 SDK 的 s32_core_cm4.h 不提供 `__set_MSP()` 和 `NVIC_SystemReset()`，需自行用内联汇编实现。
 11. **系统复位实现**：通过写 SCB->AIRCR (VECTKEY=0x05FA + SYSRESETREQ=1) 触发，参考 SDK 的 `system_S32K144.c::SystemSoftwareReset()`。
+12. **CRC32 校验**：使用 CRC-32/ISO-HDLC 算法（与 zlib.crc32() 一致），多项式 0xEDB88320，初始值 0xFFFFFFFF，输出异或 0xFFFFFFFF。上位机用 Python `zlib.crc32(data) & 0xFFFFFFFF` 计算。
+13. **升级流程**：0x34→0x36×N→0x37→0x2E(CRC32)→跳 App。0x37 不再直接跳 App，必须等 CRC32 校验通过。
 
 ---
 
 ## 下一阶段计划
 
-### v0.6：完善与增强
+### v0.8：完善与增强
 1. **Bootloader 安全加固**：
-   - 固件完整性校验（CRC32 或 Hash 校验 App 内容）
    - 防止回滚（版本号比较）
+   - 安全访问服务（0x27）
 2. **超时与异常处理**：
    - CAN 接收帧超时（0x36 传输间隔超过 P2* 超时）
    - 0x34 后无 0x37 完成的会话清理
    - 看门狗（WDOG）保护
-3. **Boot 模式选择**：
-   - 上电自检是否有升级标志
+3. **Boot 模式选择增强**：
+   - 上电自检是否有升级标志（Flash 标志位）
    - 跳 App 失败后的恢复策略
 4. **多帧传输支持（ISO 14229-2 扩展）**：
    - 0x34 大数据量请求（超过 7 字节地址+大小）
    - 0x36 多帧数据块传输
 5. **其他 UDS 服务**：
    - 0x27 安全访问
-   - 0x2E 写入 DID
    - 0x28 通信控制（禁用/启用 CAN 通信）
 
 ---

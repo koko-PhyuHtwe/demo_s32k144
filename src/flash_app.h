@@ -19,5 +19,6 @@ void    FlashApp_Init(void);
 uint8_t FlashApp_Erase(uint32_t addr, uint32_t size);
 uint8_t FlashApp_Write(uint32_t addr, const uint8_t *data, uint32_t size);
 uint8_t FlashApp_Verify(uint32_t addr, const uint8_t *expected, uint32_t size);
+uint32_t FlashApp_CalcCRC32(uint32_t addr, uint32_t size);
 
 #endif /* FLASH_APP_H */

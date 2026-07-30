@@ -13,6 +13,7 @@
 #define UDS_SID_SESSION_CONTROL       0x10U  /* 会话控制 */
 #define UDS_SID_ECU_RESET             0x11U  /* ECU 复位 */
 #define UDS_SID_READ_DID              0x22U  /* 读数据标识符 */
+#define UDS_SID_WRITE_DID             0x2EU  /* 写数据标识符（用于 CRC32 校验） */
 #define UDS_SID_REQUEST_DOWNLOAD      0x34U  /* 请求下载 */
 #define UDS_SID_TRANSFER_DATA         0x36U  /* 传输数据 */
 #define UDS_SID_REQUEST_TRANSFER_EXIT 0x37U  /* 退出传输 */
@@ -29,6 +30,10 @@
 /* ==================== 会话类型 ==================== */
 #define UDS_SESSION_DEFAULT      0x01U  /* 默认会话 */
 #define UDS_SESSION_EXTENDED     0x03U  /* 扩展会话 */
+
+/* ==================== DID 定义 ==================== */
+#define UDS_DID_SW_VERSION       0xF189U  /* 软件版本号 */
+#define UDS_DID_CRC32            0xFF01U  /* CRC32 校验请求 */
 
 /* ==================== S3Server 超时 ==================== */
 #define S3_SERVER_TIMEOUT_MS     5000U  /* 5 秒超时 */

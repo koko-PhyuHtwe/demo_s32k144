@@ -2,7 +2,7 @@
 
 基于 S32 Design Studio (S32DS.3.4) + S32K144 (Cortex-M4F) 的 CAN Bootloader 开发工程。
 
-当前阶段：**超时保护 + 自动跳 App**（v0.5 完成）。
+当前阶段：**Boot 模式选择**（v0.6 完成）。
 
 ---
 
@@ -15,6 +15,7 @@
 | v0.3 | **UDS 基础服务（0x10 / 0x11 / 0x22）** | ✅ 完成 | **uds-basic** |
 | v0.4 | **Flash 驱动集成 + UDS 0x34/0x36/0x37 下载链路** | ✅ 完成 | **flash-download** |
 | v0.5 | **超时保护 + 自动跳 App** | ✅ 完成 | **s3-timeout-jump** |
+| v0.6 | **Boot 模式选择（上电先跳 App）** | ✅ 完成 | **boot-mode-select** |
 
 ---
 
@@ -389,6 +390,14 @@ int main(void)
 | 22 | ECU 复位 | 发送 `02 11 01` | 收到 0x51 正响应，100ms 后系统复位 | ✅ |
 | 23 | App 合法性校验 | Flash 里有残留数据时超时 | 正确识别为非法 App，留在 Bootloader | ✅ |
 
+### v0.6 Boot 模式选择测试
+
+| # | 场景 | 操作 | 期望结果 | 状态 |
+|---|------|------|----------|------|
+| 24 | 上电先跳 App | 上电（无合法 App） | 打印启动信息 → `No valid App...` → 进入 Bootloader | ✅ |
+| 25 | CAN 通信正常 | 上电后发 `02 10 03` | 收到 0x50 正响应 | ✅ |
+| 26 | 中断恢复 | 上电后多次超时检查 | CAN 中断持续正常工作 | ✅ |
+
 ---
 
 ## 快速开始
@@ -442,19 +451,15 @@ git status
 # 3. 添加所有改动
 git add -A
 
-# 4. 提交（阶段标记：v0.5 超时保护 + 跳 App）
-git commit -m "feat: v0.5 S3Server 超时保护 + 自动跳 App
-                 - 实现 5s 超时倒计时 (UDS_Tick)
-                 - 收到 UDS 请求重置 S3Server
-                 - 升级中禁止跳 App (bootloaderActive 标志)
-                 - App 合法性校验 (MSP 在 SRAM, PC 在 Flash)
-                 - 实现 Jump_To_App: VTOR 重定向 + MSP 切换
-                 - 实现 NVIC_SystemReset 和 __set_MSP (内联汇编)
-                 - ECU 复位服务 (0x11) 真正执行系统复位
-                 - 23 项测试全部通过"
+# 4. 提交（阶段标记：v0.6 Boot 模式选择）
+git commit -m "feat: v0.6 Boot 模式选择（上电先跳 App）
+                 - main.c 调整初始化顺序：时钟/引脚/UART → Jump_To_App → CAN/Flash/UDS
+                 - 有合法 App 时上电直接跳转，不浪费时间等 5 秒
+                 - Jump_To_App 返回前恢复中断使能，确保 CAN 正常工作
+                 - 26 项测试全部通过"
 
 # 5. (可选) 打标签
-git tag -a v0.5-s3-timeout-jump -m "S3Server 超时保护 + 自动跳 App 完成"
+git tag -a v0.6-boot-mode-select -m "Boot 模式选择完成，上电先尝试跳 App"
 
 # 6. (可选) 推送到远程仓库
 git push origin main

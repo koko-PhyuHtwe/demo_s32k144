@@ -550,6 +550,8 @@ void Jump_To_App(void)
         UART_SendString("No valid App, stay in Bootloader\r\n");
         /* 没有 App，重新开始倒计时 */
         s3ServerTimer = S3_SERVER_TIMEOUT_MS;
+        /* 确保中断重新打开（如果之前被关过） */
+        INT_SYS_EnableIRQGlobal();
         return;
     }
 

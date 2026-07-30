@@ -2,7 +2,7 @@
 
 基于 S32 Design Studio (S32DS.3.4) + S32K144 (Cortex-M4F) 的 CAN Bootloader 开发工程。
 
-当前阶段：**Flash 升级链路跑通**（UDS 0x34/0x36/0x37 下载服务）。
+当前阶段：**超时保护 + 自动跳 App**（v0.5 完成）。
 
 ---
 
@@ -14,7 +14,7 @@
 | v0.2 | CAN 环形队列改造，解耦中断与业务 | ✅ 完成 | can-ring-buffer |
 | v0.3 | **UDS 基础服务（0x10 / 0x11 / 0x22）** | ✅ 完成 | **uds-basic** |
 | v0.4 | **Flash 驱动集成 + UDS 0x34/0x36/0x37 下载链路** | ✅ 完成 | **flash-download** |
-| v0.5 | 超时保护 + 自动跳 App | ⏳ 待开发 | |
+| v0.5 | **超时保护 + 自动跳 App** | ✅ 完成 | **s3-timeout-jump** |
 
 ---
 
@@ -245,12 +245,18 @@ CAN_Callback (ISR)
 
 | SID | 服务 | 子功能 | 说明 |
 |-----|------|--------|------|
-| **0x10** | 会话控制 | 0x01 默认 / 0x03 扩展 | 诊断会话切换 |
-| **0x11** | ECU 复位 | 0x01 硬复位 | 请求复位（暂只回响应，后续加复位逻辑） |
+| **0x10** | 会话控制 | 0x01 默认 / 0x03 扩展 | 诊断会话切换，重置 S3Server 计时器 |
+| **0x11** | ECU 复位 | 0x01 硬复位 | 延时 100ms 后执行系统复位（NVIC_SystemReset） |
 | **0x22** | 读 DID | 0xF189 版本号 | 读取软件版本字符串 "V1.0" |
-| **0x34** | 请求下载 | - | 擦除目标扇区，准备接收数据 |
+| **0x34** | 请求下载 | - | 擦除目标扇区，进入升级模式（禁止跳 App） |
 | **0x36** | 传输数据 | BlockNumber | 单帧传输 4 字节，攒满 8 字节写入 Flash |
-| **0x37** | 退出传输 | - | 完成下载，处理剩余数据（补 0xFF） |
+| **0x37** | 退出传输 | - | 完成下载，跳转到新 App |
+
+**S3Server 超时机制（v0.5）：**
+- 启动后 5 秒内无有效 UDS 请求 → 尝试跳 App
+- 收到任何有效 UDS 请求 → 重置计时器为 5 秒
+- 升级中（0x34 之后、0x37 之前）→ 超时不跳，继续等待
+- App 合法性校验：MSP 必须在 SRAM 范围 (0x20000000~0x20010000)，PC 必须在 App Flash 范围 (0x00010000~0x0007FFFF)
 
 **已实现的否定响应 (NRC)：**
 
@@ -280,8 +286,10 @@ CAN_Callback (ISR)
 
 | 函数 | 功能 |
 |------|------|
-| `UDS_Init()` | UDS 模块初始化（当前无需额外操作） |
+| `UDS_Init()` | UDS 模块初始化（启动 S3Server 倒计时） |
 | `UDS_Process()` | 主循环调用：取队列数据 → 解析 SID → 分发服务 |
+| `UDS_Tick()` | 主循环每 1ms 调用：S3Server 倒计时递减 |
+| `Jump_To_App()` | 校验 App 合法性 → 重定向 VTOR → 切换 MSP → 跳转 |
 
 ---
 
@@ -300,14 +308,22 @@ int main(void)
     UART_SendBootMessage();    // 发送启动信息
     CAN_Init();                // CAN（中断接收 + 环形队列）
     FlashApp_Init();           // Flash 驱动
-    UDS_Init();                // UDS 诊断服务
+    UDS_Init();                // UDS 诊断服务（启动 S3Server 倒计时）
 
     /* 主循环 */
     for (;;)
     {
         UDS_Process();         // UDS 处理（有数据才解析）
-        OSIF_TimeDelay(1000);  // 延时 1 秒
-        LED_ToggleBoth();      // LED 心跳闪烁
+        UDS_Tick();           // S3Server 超时计时（每毫秒减 1）
+        OSIF_TimeDelay(1);    // 1ms 延时（作为计时基准）
+
+        /* 每 500ms 翻转 LED（心跳指示） */
+        static uint16_t ledCounter = 0;
+        ledCounter++;
+        if (ledCounter >= 500U) {
+            ledCounter = 0;
+            LED_ToggleBoth();
+        }
     }
 }
 ```
@@ -363,6 +379,16 @@ int main(void)
 | 17 | 块号错误 | `07 34...` → `06 36 05 AA BB CC DD 00` | `03 7F 36 73 00 00 00 00` | 0x73 | ✅ |
 | 18 | 地址越界 | `07 34 00 00 00 00 00 10`（Bootloader 区域） | `03 7F 34 31 00 00 00 00` | 0x31 | ✅ |
 
+### v0.5 超时与跳转测试
+
+| # | 场景 | 操作 | 期望结果 | 状态 |
+|---|------|------|----------|------|
+| 19 | 空板超时 | 上电后不发任何请求 | 每 5 秒打印 `checking App...` → `No valid App...`，持续循环 | ✅ |
+| 20 | S3Server 重置 | 上电后立刻发 `02 10 03` | 收到 0x50 正响应，5 秒后才超时 | ✅ |
+| 21 | 升级中不超时 | 先发 0x34，然后等 5 秒 | 打印 `download in progress, wait...`，继续等待 | ✅ |
+| 22 | ECU 复位 | 发送 `02 11 01` | 收到 0x51 正响应，100ms 后系统复位 | ✅ |
+| 23 | App 合法性校验 | Flash 里有残留数据时超时 | 正确识别为非法 App，留在 Bootloader | ✅ |
+
 ---
 
 ## 快速开始
@@ -416,14 +442,19 @@ git status
 # 3. 添加所有改动
 git add -A
 
-# 4. 提交（阶段标记：Flash 下载链路完成）
-git commit -m "feat: v0.4 Flash 升级链路跑通 (0x34 请求下载 / 0x36 传输数据 / 0x37 退出传输)
-                 - 新增 flash_app.h / flash_app.c，封装 C40ASF Flash 驱动
-                 - 支持 UDS 下载流程：擦除 → 传输 → 校验
-                 - 18 项测试全部通过（含错误场景测试）"
+# 4. 提交（阶段标记：v0.5 超时保护 + 跳 App）
+git commit -m "feat: v0.5 S3Server 超时保护 + 自动跳 App
+                 - 实现 5s 超时倒计时 (UDS_Tick)
+                 - 收到 UDS 请求重置 S3Server
+                 - 升级中禁止跳 App (bootloaderActive 标志)
+                 - App 合法性校验 (MSP 在 SRAM, PC 在 Flash)
+                 - 实现 Jump_To_App: VTOR 重定向 + MSP 切换
+                 - 实现 NVIC_SystemReset 和 __set_MSP (内联汇编)
+                 - ECU 复位服务 (0x11) 真正执行系统复位
+                 - 23 项测试全部通过"
 
 # 5. (可选) 打标签
-git tag -a v0.4-flash-download -m "Flash 升级链路完成，支持通过 CAN 下载固件"
+git tag -a v0.5-s3-timeout-jump -m "S3Server 超时保护 + 自动跳 App 完成"
 
 # 6. (可选) 推送到远程仓库
 git push origin main
@@ -441,22 +472,33 @@ git push origin --tags
 5. **CAN 接收关键**：`FLEXCAN_DRV_Receive()` 必须在 `ConfigRxMb()` 之后调用，否则 MB 状态不是 `RX_BUSY`，中断不会触发回调。回调中需再次调用以恢复接收能力。
 6. **UDS PCI 字段**：单帧时 PCI 低 4 位 = 有效数据长度（SID + 参数之和），注意区分"请求长度"和"响应长度"。
 7. **Flash 分区**：App 起始地址 0x00010000，擦除对齐 4KB，写入对齐 8 字节。Flash 操作期间必须关中断。
+8. **S3Server 超时**：Bootloader 启动后 5 秒内无 UDS 请求则尝试跳 App。收到任何有效 UDS 都会重置计时器。
+9. **App 合法性**：MSP 必须在 SRAM (0x20000000~0x20010000)，PC 必须在 App Flash (0x00010000~0x0007FFFF)，否则留在 Bootloader。
+10. **NXP SDK 缺失 CMSIS**：S32K144 SDK 的 s32_core_cm4.h 不提供 `__set_MSP()` 和 `NVIC_SystemReset()`，需自行用内联汇编实现。
+11. **系统复位实现**：通过写 SCB->AIRCR (VECTKEY=0x05FA + SYSRESETREQ=1) 触发，参考 SDK 的 `system_S32K144.c::SystemSoftwareReset()`。
 
 ---
 
 ## 下一阶段计划
 
-### v0.5：超时保护 + 自动跳 App
-1. 配置 LPIT 定时器做 S3Server 计时（5s 超时）
-2. 规则：
-   - 收到 0x10 会话控制 → 重置定时器（保持 Bootloader 模式）
-   - 超时未收到有效 UDS → 跳 App
-   - 收到 0x11 复位 / 0x37 传输完成 → 延时 100ms 后跳 App
-3. 实现 `jump_to_app()`：
-   - 校验 App 栈顶是否合法
-   - 重定向 VTOR 到 App 地址
-   - 切换 MSP → 跳到 App 复位函数
-4. 完善 0x11 ECU 复位服务（真正执行系统复位）
+### v0.6：完善与增强
+1. **Bootloader 安全加固**：
+   - 固件完整性校验（CRC32 或 Hash 校验 App 内容）
+   - 防止回滚（版本号比较）
+2. **超时与异常处理**：
+   - CAN 接收帧超时（0x36 传输间隔超过 P2* 超时）
+   - 0x34 后无 0x37 完成的会话清理
+   - 看门狗（WDOG）保护
+3. **Boot 模式选择**：
+   - 上电自检是否有升级标志
+   - 跳 App 失败后的恢复策略
+4. **多帧传输支持（ISO 14229-2 扩展）**：
+   - 0x34 大数据量请求（超过 7 字节地址+大小）
+   - 0x36 多帧数据块传输
+5. **其他 UDS 服务**：
+   - 0x27 安全访问
+   - 0x2E 写入 DID
+   - 0x28 通信控制（禁用/启用 CAN 通信）
 
 ---
 

@@ -49,11 +49,19 @@ int main(void)
     {
         /* UDS 处理（内部检查队列，有数据才解析） */
         UDS_Process();
-        
-        /* 延时 1 秒 */
-        OSIF_TimeDelay(1000);
-        
-        /* 翻转 LED 状态（心跳指示） */
-        LED_ToggleBoth();
+
+        /* S3Server 超时计时（每毫秒减 1） */
+        UDS_Tick();
+
+        /* 延时 1ms（作为超时计时基准） */
+        OSIF_TimeDelay(1);
+
+        /* 每 500ms 翻转 LED（心跳指示） */
+        static uint16_t ledCounter = 0;
+        ledCounter++;
+        if (ledCounter >= 500U) {
+            ledCounter = 0;
+            LED_ToggleBoth();
+        }
     }
 }

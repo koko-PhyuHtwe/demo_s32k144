@@ -8,6 +8,56 @@
 #include "uds.h"
 #include "can.h"
 #include "flash_app.h"
+#include "uart.h"
+#include "osif.h"
+#include "interrupt_manager.h"
+#include "device_registers.h"
+
+/* ==================== CMSIS 兼容函数（NXP SDK 不提供，自己实现） ==================== */
+
+/**
+ * @brief  设置主栈指针 MSP
+ * @note   NXP S32 SDK 的 s32_core_cm4.h 不提供 __set_MSP()，
+ *         这里用内联汇编实现（Cortex-M4: msr msp, r0）
+ */
+__attribute__((always_inline)) static inline void __set_MSP(uint32_t topOfMainStack)
+{
+    __asm volatile ("msr msp, %0" : : "r" (topOfMainStack) : );
+}
+
+/**
+ * @brief  触发系统复位（NVIC System Reset）
+ * @note   参考 S32 SDK 的 system_S32K144.c::SystemSoftwareReset() 实现
+ *         通过写 SCB->AIRCR 的 SYSRESETREQ 位触发芯片复位
+ */
+static void NVIC_SystemReset(void)
+{
+    uint32_t regValue;
+
+    /* 关中断，防止复位过程中被中断打断 */
+    INT_SYS_DisableIRQGlobal();
+
+    /* 读当前 AIRCR */
+    regValue = S32_SCB->AIRCR;
+
+    /* 清掉 VECTKEY 字段（高 16 位） */
+    regValue &= ~(S32_SCB_AIRCR_VECTKEY_MASK);
+
+    /* 写 VECTKEY = 0x05FA（必须，否则写不进去） */
+    regValue |= S32_SCB_AIRCR_VECTKEY(FEATURE_SCB_VECTKEY);
+
+    /* 置位 SYSRESETREQ（请求系统复位） */
+    regValue |= S32_SCB_AIRCR_SYSRESETREQ(0x1U);
+
+    /* 写回 AIRCR，复位立即生效 */
+    S32_SCB->AIRCR = regValue;
+
+    /* 死等：复位真正生效前不要往下走 */
+    __asm volatile ("dsb 0xF" ::: "memory");
+    while (1) {
+        __asm volatile ("nop");
+    }
+}
 
 /* ==================== 内部函数声明 ==================== */
 static void UDS_HandleSessionControl(const can_frame_t *frame);
@@ -32,6 +82,10 @@ static uint8_t  blockCounter              = 1U;    /* 期望的块序号 */
 static uint8_t  dataBuffer[8];                    /* 数据缓存（攒8字节写一次） */
 static uint8_t  dataBufferIndex           = 0U;   /* 缓存当前字节数 */
 
+/* ==================== S3Server 超时管理 ==================== */
+static volatile uint32_t s3ServerTimer = 0U;  /* 剩余超时时间 (ms) */
+static uint8_t bootloaderActive = 0U;          /* 0=可以跳App, 1=正在升级，禁止跳 */
+
 /* ==================== 公共接口 ==================== */
 
 /**
@@ -39,7 +93,8 @@ static uint8_t  dataBufferIndex           = 0U;   /* 缓存当前字节数 */
  */
 void UDS_Init(void)
 {
-    /* 目前无需额外初始化 */
+    s3ServerTimer = S3_SERVER_TIMEOUT_MS;  /* 启动 S3Server 倒计时 */
+    bootloaderActive = 0U;
 }
 
 /**
@@ -61,6 +116,9 @@ void UDS_Process(void)
     if ((frame.id != CAN_RX_ID) || (frame.dlc < 2U)) {
         return;
     }
+
+    /* 收到有效 UDS 请求，重置 S3Server 定时器 */
+    s3ServerTimer = S3_SERVER_TIMEOUT_MS;
 
     /* 解析 SID（data[1]），分发到对应服务 */
     uint8_t sid = frame.data[1];
@@ -162,7 +220,9 @@ static void UDS_HandleECUReset(const can_frame_t *frame)
 
     UDS_SendPositiveResponse(UDS_SID_ECU_RESET, payload, 1);
 
-    /* TODO: 延时 100ms 后执行 NVIC_SystemReset() 完成硬复位 */
+    /* 延时 100ms 后执行系统硬复位 */
+    OSIF_TimeDelay(100);
+    NVIC_SystemReset();  /* 不会返回 */
 }
 
 /**
@@ -261,6 +321,7 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
     downloadTotalSize = (uint32_t)size;
     blockCounter     = 1U;
     dataBufferIndex  = 0U;
+    bootloaderActive = 1U;  /* 升级中，禁止跳 App */
 
     /* 构造正响应：数据格式标识 + 地址长度 + 每块最大字节数 */
     uint8_t payload[3];
@@ -369,9 +430,15 @@ static void UDS_HandleRequestTransferExit(const can_frame_t *frame)
 
     /* 下载完成，回到空闲状态 */
     downloadState = DOWNLOAD_IDLE;
+    bootloaderActive = 0U;  /* 允许跳 App */
 
     /* 回复正响应（无额外数据） */
     UDS_SendPositiveResponse(UDS_SID_REQUEST_TRANSFER_EXIT, NULL, 0);
+
+    /* 升级完成，延时后跳转到新 App */
+    UART_SendString("Upgrade done, jumping to App...\r\n");
+    OSIF_TimeDelay(100);  /* 等 100ms 让上位机收到响应 */
+    Jump_To_App();
 }
 
 /* ==================== 内部辅助函数 ==================== */
@@ -431,4 +498,73 @@ static void UDS_SendNegativeResponse(uint8_t sid, uint8_t nrc)
     txData[3] = nrc;      /* 错误码 */
 
     CAN_SendMessage(CAN_TX_ID, txData, 8);
+}
+
+/* ==================== 超时与跳转 ==================== */
+
+/**
+ * @brief  UDS 定时器 tick（主循环每次调用递减 1ms）
+ * @note   超时后自动跳转 App
+ */
+void UDS_Tick(void)
+{
+    if (s3ServerTimer > 0U) {
+        s3ServerTimer--;
+        if (s3ServerTimer == 0U) {
+            /* 超时了，如果不在升级中就跳 App */
+            if (!bootloaderActive) {
+                UART_SendString("S3 timeout, checking App...\r\n");
+                Jump_To_App();
+            } else {
+                /* 升级中，延长超时 */
+                UART_SendString("S3 timeout, download in progress, wait...\r\n");
+                s3ServerTimer = S3_SERVER_TIMEOUT_MS;
+            }
+        }
+    }
+}
+
+/**
+ * @brief  跳转到 App
+ * @note   1. 检查 App 栈顶是否合法（SRAM 范围内）
+ *         2. 检查 App 复位向量是否合法（App Flash 范围内）
+ *         3. 重定向向量表到 App 地址
+ *         4. 设置主栈指针为 App 栈顶
+ *         5. 跳转到 App 的 Reset_Handler
+ *         不会返回
+ */
+void Jump_To_App(void)
+{
+    /* 1. 读取 App 的栈顶地址和复位向量 */
+    uint32_t appMsp = *(volatile uint32_t *)APP_FLASH_BASE;
+    uint32_t appPc  = *(volatile uint32_t *)(APP_FLASH_BASE + 4U);
+
+    /* 2. 合法性检查：
+     *    - MSP 必须在 SRAM 范围内 (S32K144: 0x20000000 ~ 0x2000F000)
+     *    - PC  必须在 App Flash 范围内 (0x00010000 ~ 0x0007FFFF)
+     *    任一不通过就认为是非法 App（比如残留测试数据）
+     */
+    if ((appMsp == 0xFFFFFFFFU) || (appMsp == 0x00000000U) ||
+        (appMsp < 0x20000000U) || (appMsp > 0x20010000U) ||
+        (appPc  < APP_FLASH_BASE) || (appPc >= APP_FLASH_END)) {
+        UART_SendString("No valid App, stay in Bootloader\r\n");
+        /* 没有 App，重新开始倒计时 */
+        s3ServerTimer = S3_SERVER_TIMEOUT_MS;
+        return;
+    }
+
+    /* 3. 关闭所有中断 */
+    UART_SendString("Jumping to App...\r\n");
+    INT_SYS_DisableIRQGlobal();
+
+    /* 4. 重定向向量表到 App 地址 */
+    S32_SCB->VTOR = APP_FLASH_BASE;
+
+    /* 5. 设置主栈指针 */
+    __set_MSP(appMsp);
+
+    /* 6. 跳转到 App 的 Reset_Handler */
+    ((void (*)(void))appPc)();
+
+    /* 不会执行到这里 */
 }

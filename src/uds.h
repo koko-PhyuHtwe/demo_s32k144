@@ -30,6 +30,12 @@
 #define UDS_SESSION_DEFAULT      0x01U  /* 默认会话 */
 #define UDS_SESSION_EXTENDED     0x03U  /* 扩展会话 */
 
+/* ==================== S3Server 超时 ==================== */
+#define S3_SERVER_TIMEOUT_MS     5000U  /* 5 秒超时 */
+
+/* ==================== App 跳转 ==================== */
+#define APP_FLASH_BASE           0x00010000U  /* App 起始地址 */
+
 /* ==================== 函数声明 ==================== */
 
 /**
@@ -42,5 +48,17 @@ void UDS_Init(void);
  * @note   在主循环中调用，从 CAN 队列取数据并解析
  */
 void UDS_Process(void);
+
+/**
+ * @brief  UDS 定时器 tick（每毫秒调用一次）
+ * @note   超时后自动跳转 App
+ */
+void UDS_Tick(void);
+
+/**
+ * @brief  跳转到 App
+ * @note   不会返回，直接跳到 App 的 Reset_Handler
+ */
+void Jump_To_App(void);
 
 #endif /* UDS_H */

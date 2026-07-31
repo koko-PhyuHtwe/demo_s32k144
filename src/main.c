@@ -1,9 +1,27 @@
 /**
  * @file    main.c
  * @brief   主程序入口
- * @details S32K144 Bootloader：LED 心跳 + UART 启动信息 + CAN 中断接收 + UDS 诊断
+ * @details S32K144 Bootloader/App 双构建入口
+ *          - 不定义 BUILD_APP → 编译为 Bootloader（起始 0x00000000）
+ *          - 定义 BUILD_APP → 编译为 App（起始 0x00010000）
  */
 
+#ifdef BUILD_APP
+/* ==================== App 构建 ==================== */
+#include "sdk_project_config.h"
+#include "app.h"
+
+/**
+ * @brief  App 主函数
+ * @return 理论上不会返回
+ */
+int main(void)
+{
+    return app_main();
+}
+
+#else
+/* ==================== Bootloader 构建 ==================== */
 #include "sdk_project_config.h"
 #include "osif.h"
 #include "led.h"
@@ -11,6 +29,7 @@
 #include "can.h"
 #include "uds.h"
 #include "flash_app.h"
+#include "app.h"  /* 共享升级标志定义 */
 
 /**
  * @brief  主函数
@@ -18,37 +37,47 @@
  */
 int main(void)
 {
-    /* ===== 系统初始化 ===== */
-    
+    /* ===== 系统初始化（最小系统） ===== */
+
     /* 1. 初始化时钟 */
     CLOCK_DRV_Init(&clockMan1_InitConfig0);
-    
+
     /* 2. 初始化引脚 */
     PINS_DRV_Init(NUM_OF_CONFIGURED_PINS0, g_pin_mux_InitConfigArr0);
-    
-    /* ===== 最小外设初始化 ===== */
 
-    /* 3. 初始化 LED */
+    /* 3. 初始化 LED（用于状态指示） */
     LED_Init();
 
     /* 4. 初始化 UART 并发送启动信息 */
     UART_Init();
     UART_SendBootMessage();
 
-    /* 5. 尝试直接跳转到 App（合法则不会返回） */
-    Jump_To_App();
+    /* ===== 检查升级标志 ===== */
+    uint32_t upgradeFlag = *(volatile uint32_t *)UPGRADE_FLAG_ADDR;
+    if (upgradeFlag == UPGRADE_FLAG_MAGIC) {
+        /* 有升级请求，留在 Bootloader */
+        UART_SendString("Upgrade flag detected, stay in Bootloader\r\n");
 
-    /* ===== Bootloader 模式（没有合法 App 才执行到这里） ===== */
+        /* 清除升级标志（擦除该 4KB 扇区） */
+        FlashApp_Erase(UPGRADE_FLAG_ADDR, 0x1000U);
+    } else {
+        /* 没有升级请求，尝试跳 App */
+        UART_SendString("No upgrade flag, try jumping to App...\r\n");
+        Jump_To_App();
+        /* 如果返回，说明没有合法 App，继续往下走 */
+    }
 
-    /* 6. 初始化 CAN（配置发送邮箱 M0 + 接收邮箱 M1，开启中断） */
+    /* ===== 外设初始化（仅 Bootloader 模式需要） ===== */
+
+    /* 5. 初始化 CAN（配置发送邮箱 M0 + 接收邮箱 M1，开启中断） */
     CAN_Init();
 
-    /* 7. 初始化 Flash 驱动 */
+    /* 6. 初始化 Flash 驱动 */
     FlashApp_Init();
 
-    /* 8. 初始化 UDS 诊断服务 */
+    /* 7. 初始化 UDS 诊断服务 */
     UDS_Init();
-    
+
     /* ===== 主循环 ===== */
     for (;;)
     {
@@ -70,3 +99,4 @@ int main(void)
         }
     }
 }
+#endif /* BUILD_APP */

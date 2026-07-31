@@ -40,6 +40,12 @@ typedef struct {
 void CAN_Init(void);
 
 /**
+ * @brief  CAN 反初始化
+ * @note   关闭 FlexCAN2，用于 Bootloader 跳 App 前清理
+ */
+void CAN_Deinit(void);
+
+/**
  * @brief  通过轮询模式发送 CAN 消息
  * @param  id:   CAN 消息 ID
  * @param  data: 数据指针（最多 8 字节）

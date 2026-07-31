@@ -1,8 +1,9 @@
-# S32K144 Bootloader 开发项目
+# S32K144 Bootloader + App 完整工程
 
-基于 S32 Design Studio (S32DS.3.4) + S32K144 (Cortex-M4F) 的 CAN Bootloader 开发工程。
+基于 S32 Design Studio (S32DS.3.4) + S32K144 (Cortex-M4F) 的 **CAN Bootloader + App** 一体化工程。
+使用单个工程、两个构建配置，分别生成 Bootloader 和 App 固件。
 
-当前阶段：**固件 CRC32 校验**（v0.6 完成）。
+当前版本：**v1.0 完整 Bootloader 链路**（全部功能验证通过 ✅）。
 
 ---
 
@@ -12,11 +13,14 @@
 |------|------|------|----------|
 | v0.1 | 最小系统模板（时钟 + LED + UART + CAN 基础收发） | ✅ 完成 | init-template |
 | v0.2 | CAN 环形队列改造，解耦中断与业务 | ✅ 完成 | can-ring-buffer |
-| v0.3 | **UDS 基础服务（0x10 / 0x11 / 0x22）** | ✅ 完成 | **uds-basic** |
-| v0.4 | **Flash 驱动集成 + UDS 0x34/0x36/0x37 下载链路** | ✅ 完成 | **flash-download** |
-| v0.5 | **超时保护 + 自动跳 App** | ✅ 完成 | **s3-timeout-jump** |
-| v0.6 | **Boot 模式选择（上电先跳 App）** | ✅ 完成 | **boot-mode-select** |
-| v0.7 | **固件 CRC32 校验（0x2E WriteDID）** | ✅ 完成 | **crc32-verify** |
+| v0.3 | UDS 基础服务（0x10 / 0x11 / 0x22） | ✅ 完成 | uds-basic |
+| v0.4 | Flash 驱动集成 + UDS 0x34/0x36/0x37 下载链路 | ✅ 完成 | flash-download |
+| v0.5 | S3Server 超时保护 + 自动跳 App | ✅ 完成 | s3-timeout-jump |
+| v0.6 | Boot 模式选择（上电先尝试跳 App） | ✅ 完成 | boot-mode-select |
+| v0.7 | 固件 CRC32 校验（0x2E WriteDID） | ✅ 完成 | crc32-verify |
+| v0.8 | 双构建配置 + Boot↔App 双向跳转 | ✅ 完成 | dual-build-config |
+| v0.9 | UART 中断接收 + App 触发升级（发 'U'） | ✅ 完成 | uart-upgrade-trigger |
+| **v1.0** | **CANoe 自动刷写脚本 + 完整链路验证** | ✅ 完成 | **final-canoe-script** |
 
 ---
 
@@ -74,30 +78,91 @@
 
 ---
 
+## Flash 分区规划
+
+```
+0x00000000 ┌────────────────────────────┐
+           │                            │
+           │   Bootloader 区域          │  64 KB
+           │   (Debug_FLASH 构建)       │
+           │                            │
+0x0000FFF0 ├────────────────────────────┤  ← 升级标志位 UPGRADE_FLAG_ADDR
+           │                            │
+0x00010000 ├────────────────────────────┤  ← App 起始地址 APP_FLASH_BASE
+           │                            │
+           │   App 区域                  │  约 448 KB
+           │   (Debug_APP 构建)         │
+           │                            │
+0x00080000 └────────────────────────────┘
+```
+
+**升级标志位定义（[app.h](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/app.h)）：**
+```c
+#define UPGRADE_FLAG_ADDR     0x0003FFF0U
+#define UPGRADE_FLAG_MAGIC    0x5AA55AA5U
+```
+
+- App 想升级时 → 把 `0x5AA55AA5` 写入 `0x0003FFF0` → 系统复位 → Bootloader 检测到 magic number → 停在 Bootloader 等 UDS
+- UDS CRC 校验通过 → Bootloader 擦除 `0x0003FFF0` 所在扇区 → CANoe 发 0x11 ECU Reset → 正常跳 App
+
+---
+
+## 双构建配置
+
+单个 S32DS 工程中创建了两个构建配置：
+
+| 构建配置 | 链接脚本 | 预处理宏 | 起始地址 | 用途 |
+|---------|---------|---------|---------|------|
+| **Debug_FLASH** | `S32K144_64_flash.ld` | 无 | 0x00000000 | Bootloader 固件 |
+| **Debug_APP** | `S32K144_64_app.ld` | `BUILD_APP` | 0x00010000 | App 固件 |
+
+同一套源文件，[main.c](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/main.c) 中用 `#ifdef BUILD_APP` 切换：
+```c
+#ifdef BUILD_APP
+/* App 构建：只调用 app_main() */
+int main(void) { return app_main(); }
+#else
+/* Bootloader 构建：完整初始化 + UDS 循环 */
+int main(void) { ... }
+#endif
+```
+
+---
+
 ## 工程结构
 
 ```
 demo_s32k144/
-├── src/                               ← 用户应用代码
-│   ├── main.c                         ← 主程序（初始化 + 主循环调度）
-│   ├── led.h / led.c                  ← LED 驱动模块
-│   ├── uart.h / uart.c                ← LPUART1 串口驱动模块
-│   ├── can.h / can.c                  ← FlexCAN2 驱动（中断接收 + 环形队列）
-│   ├── uds.h / uds.c                  ← UDS 诊断服务（0x10/0x11/0x22/0x34/0x36/0x37）
-│   └── flash_app.h / flash_app.c      ← Flash 封装模块（初始化/擦除/写入/校验）
-├── board/                             ← 板级配置（S32 Config Tools 生成）
-│   ├── clock_config.c / .h            ← 时钟树配置
-│   ├── pin_mux.c / .h                 ← 引脚复用配置
-│   ├── peripherals_osif_1.c / .h      ← OSIF 外设配置
-│   ├── peripherals_lpuart_1.c / .h    ← LPUART1 配置
-│   ├── peripherals_flexcan_config_1.c / .h ← FlexCAN2 配置
-│   ├── peripherals_flash_1.c / .h    ← Flash 配置（C40ASF 驱动）
-│   └── sdk_project_config.h           ← SDK 统一头文件
-├── SDK/                               ← NXP SDK 驱动库
-├── Debug_Configurations/              ← J-Link / PEMicro 调试配置
+├── src/                               ← 公共源代码
+│   ├── main.c                         ← 主程序（双构建入口）
+│   ├── app.h / app.c                  ← App 主逻辑 + 升级标志定义
+│   ├── led.h / led.c                  ← LED 驱动
+│   ├── uart.h / uart.c                ← LPUART1 驱动（中断接收）
+│   ├── can.h / can.c                  ← FlexCAN2 驱动（环形队列）
+│   ├── uds.h / uds.c                  ← UDS 服务 + S3Server 超时 + 跳转
+│   └── flash_app.h / flash_app.c      ← Flash 封装（擦写校验/CRC32）
+├── board/                             ← 板级配置（Config Tools 生成）
+│   ├── clock_config.c / .h
+│   ├── pin_mux.c / .h
+│   ├── peripherals_osif_1.c / .h
+│   ├── peripherals_lpuart_1.c / .h
+│   ├── peripherals_flexcan_config_1.c / .h
+│   ├── peripherals_flash_1.c / .h
+│   └── sdk_project_config.h
+├── Project_Settings/Linker_Files/
+│   ├── S32K144_64_flash.ld            ← Bootloader 链接脚本
+│   └── S32K144_64_app.ld              ← App 链接脚本
 ├── .project / .cproject               ← S32DS Eclipse 工程文件
-├── demo_s32k144.mex                   ← S32 Config Tools 配置文件
-└── README.md                          ← 本文件
+│
+├── uds_download.can                   ← CANoe CAPL 自动升级脚本
+├── uds_download.cbf                   ← CANoe 数据库（CAPL 配置）
+├── uds_frames.csv                     ← CANoe 帧配置
+├── uds_download.py                    ← Python 离线 UDS 报文生成工具
+├── check_crc32.py                      ← CRC32 校验工具
+├── app.bin                            ← App 固件（CANoe 刷写用）
+│
+├── .gitignore
+└── README.md
 ```
 
 ---
@@ -106,14 +171,131 @@ demo_s32k144/
 
 | 引脚 | 功能 | 说明 |
 |------|------|------|
-| **PTD15** | GPIO 输出 | LED0（红），高电平点亮 |
-| **PTD16** | GPIO 输出 | LED1（绿），高电平点亮 |
+| **PTD15** | GPIO 输出 | LED0（绿灯），高电平点亮 |
+| **PTD16** | GPIO 输出 | LED1（蓝灯），高电平点亮 |
 | **PTC6** | LPUART1_RX | 串口接收 |
 | **PTC7** | LPUART1_TX | 串口发送 |
 | **PTC16** | CAN2_RX | FlexCAN2 接收 |
 | **PTC17** | CAN2_TX | FlexCAN2 发送 |
-| **PTA4** | SWD_DIO | SWD 调试数据线，不可占用 |
-| **PTC4** | SWD_CLK | SWD 调试时钟线，不可占用 |
+| **PTA4** | SWD_DIO | SWD 调试数据线 |
+| **PTC4** | SWD_CLK | SWD 调试时钟线 |
+
+---
+
+## Boot 模式流程图
+
+```
+上电复位
+    │
+    ▼
+┌──────────────────────────────────┐
+│  Bootloader 启动                  │
+│  - 初始化时钟/引脚/LED/UART       │
+│  - 打印启动信息                   │
+└──────────────┬───────────────────┘
+               │
+               ▼
+┌──────────────────────────────────┐
+│  检查 0x0003FFF0 处的标志？        │
+│  upgradeFlag = *(0x0003FFF0)      │
+└──────┬─────────────────┬──────────┘
+       │ == MAGIC         │ != MAGIC
+       ▼                  ▼
+┌───────────────┐    ┌─────────────────────────┐
+│ 停在 Bootloader│    │ 尝试跳转到 App？          │
+│ (等 UDS 下载)   │    │ - 读 App MSP/Reset向量  │
+└───────┬───────┘    │ - 检查地址合法性          │
+        │            └──────┬──────────────┬────┘
+        ▼                   │ 合法         │ 不合法
+┌────────────────────┐      ▼              ▼
+│ UDS 升级流程        │   跳转成功          ┌──────────────┐
+│ 0x10→0x34→0x36×N   │   进入 App          │ 5 秒 S3Server │
+│     →0x37→0x2E     │                     │   倒计时     │
+│     →0x11 Reset    │                     └──────┬───────┘
+└────────┬───────────┘                            │
+         │ 擦除标志位                              │ 倒计时结束
+         ▼                                        ▼
+    完整复位 → 走 "无标志 → 跳 App" 路径        回到 "尝试跳 App"
+```
+
+---
+
+## LED 状态指示
+
+| 状态 | 蓝灯 (LED1/PTD16) | 绿灯 (LED0/PTD15) |
+|------|------------------|------------------|
+| **Bootloader 运行中** | 500ms 交替闪烁 | 500ms 交替闪烁 |
+| **App 正常运行** | **常亮**（App 标志） | **200ms 快速闪烁**（App 心跳） |
+| **卡死** | 常亮 | 不亮 |
+
+---
+
+## UDS 诊断服务完整列表
+
+| SID | 服务 | 子功能/DID | 说明 |
+|-----|------|-----------|------|
+| **0x10** | 会话控制 | 0x01 默认 / 0x03 扩展 | 切换会话，重置 S3Server 计时器 |
+| **0x11** | ECU 复位 | 0x01 硬复位 | 100ms 后 NVIC 系统复位 |
+| **0x22** | 读 DID | 0xF189 | 读版本号 "V1.0" |
+| **0x2E** | 写 DID | 0xFF01 (4 字节 CRC32) | 校验 App Flash 完整性，成功则清除升级标志 |
+| **0x34** | 请求下载 | 4 字节地址 + 2 字节大小 | 擦除目标扇区，进入升级模式 |
+| **0x36** | 传输数据 | BlockNumber + 4 字节数据 | 攒 8 字节写一次 Flash |
+| **0x37** | 退出传输 | 无 | 补 0xFF 写入剩余数据，退出升级模式 |
+
+### 完整 UDS 升级流程（6 步）
+
+```
+Step 1: 0x10 03            → 扩展会话 (正响应 0x50 03)
+Step 2: 0x34 00 01 00 00 XX YY   → 请求下载 (addr=0x00010000, size=0xXXYY)
+                           ← 正响应 0x74 20 04 04
+Step 3: 0x36 <BlockNum> <4字节数据> × N   → 传输数据块 (正响应 0x76 <BlockNum>)
+Step 4: 0x37 00            → 退出传输 (正响应 0x77)
+Step 5: 0x2E FF 01 <CRC[3:0]>  → 写 CRC32 校验 (正响应 0x6E FF 01 00)
+                           → Bootloader: CRC OK → 清除升级标志
+Step 6: 0x11 01            → ECU 复位 (正响应 0x51 01)
+                           → 芯片完整硬件复位
+                           → Bootloader: 无标志 → 跳 App
+```
+
+---
+
+## S3Server 超时机制
+
+| 条件 | 行为 |
+|------|------|
+| 上电后 5 秒内无有效 UDS 请求 | 尝试跳转到 App |
+| 收到任何有效 UDS 正响应/请求 | 重置计时器为 5 秒 |
+| 升级中（0x34 之后、0x37 之前） | 超时不跳，继续等待（防止中断写入） |
+| App 合法性校验 | MSP 必须在 SRAM 范围 (0x20000000~0x20010000)，PC 必须在 App Flash 范围 (0x00010000~0x0007FFFF)，否则留在 Bootloader |
+
+---
+
+## UART 命令接口（App 运行时）
+
+| 命令 | 说明 |
+|------|------|
+| **U** 或 **u** | 触发升级：写升级标志 `0x5AA55AA5` 到 `0x0003FFF0` → 系统复位 → 进入 Bootloader |
+
+---
+
+## CANoe 自动刷写说明
+
+提供了 [uds_download.can](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/uds_download.can)（CAPL 脚本），自动完成上述 6 步 UDS 流程。
+
+### 使用方法
+
+1. 将生成的 **app.bin** 复制到 CANoe `.cfg` 配置文件同一目录
+2. 打开 CANoe，配置 CAN 通道波特率 500kbps，ID 过滤关闭
+3. 载入 `uds_download.can` 脚本
+4. App 运行时串口发 'U' 进入 Bootloader（或上电无 App 时自动等待）
+5. 点击 CANoe 开始测量 → 自动完成刷写 → 复位 → 跳转新 App
+
+### CAN ID 约定
+
+| 方向 | CAN ID | 说明 |
+|------|--------|------|
+| 上位机 → 板卡 | **0x7E0** | UDS 请求（CAPL 发送） |
+| 板卡 → 上位机 | **0x123** | UDS 响应（Bootloader 回复） |
 
 ---
 
@@ -127,7 +309,7 @@ demo_s32k144/
 | `LED_TurnOn(pin)` | 点亮指定 LED |
 | `LED_TurnOff(pin)` | 熄灭指定 LED |
 | `LED_Toggle(pin)` | 翻转指定 LED |
-| `LED_ToggleBoth()` | 同时翻转两个 LED（心跳指示） |
+| `LED_ToggleBoth()` | 同时翻转两个 LED |
 
 ### UART 模块 (`uart.h / uart.c`)
 
@@ -135,16 +317,11 @@ demo_s32k144/
 |------|-----|
 | 实例 | LPUART1 |
 | 波特率 | 115200 |
-| 数据格式 | 8N1 |
-| 发送方式 | 轮询（`LPUART_DRV_SendDataPolling`） |
+| 格式 | 8N1 |
+| 发送 | 轮询 `LPUART_DRV_SendDataPolling` |
+| 接收 | SDK 异步中断 + 回调（`uart_rx_callback` → `g_rxReady` 标志） |
 
-| 函数 | 功能 |
-|------|------|
-| `UART_Init()` | 初始化 LPUART1 |
-| `UART_SendData(data, len)` | 轮询发送数据 |
-| `UART_SendBootMessage()` | 发送系统启动信息 |
-
-上电后串口输出：
+上电串口输出：
 ```
 ========================================
   S32K144 System Boot
@@ -164,14 +341,13 @@ demo_s32k144/
 | 工作模式 | Normal |
 | 波特率 | 500 kbps |
 | 采样点 | 87.5% |
-| 帧格式 | 标准帧（11 位 ID） |
 
 **邮箱分配：**
 
 | 邮箱 | 方向 | ID | 说明 |
 |------|------|----|------|
-| M0 | 发送 | 0x123 | 回复数据（UDS 正响应 / 否定响应） |
-| M1 | 接收 | 0x7E0 | 接收 CAN 卡数据（ID 过滤） |
+| M0 | 发送 | 0x123 | UDS 正/负响应 |
+| M1 | 接收 | 0x7E0 | UDS 请求（ID 过滤） |
 
 **波特率计算：**
 ```
@@ -181,48 +357,11 @@ Bit Rate = 8MHz / (0+1) / 16 = 500,000 bps
 采样点   = (1+6+7) / 16 = 87.5%
 ```
 
-**核心改造：环形队列**
-- 中断回调（ISR）只负责把收到的帧写入环形队列（FIFO），不处理业务
-- 主循环调用 `UDS_Process()` 从队列取数据，交给 UDS 解析器
-- 队列深度 = 16，双指针（Head/Tail）环形读写
-
-```
-CAN 硬件接收
-  ↓
-CAN_Callback (ISR)
-  ① 写入环形队列 (canRxQueue[Head], Head++)
-  ② FLEXCAN_DRV_Receive() 重启接收
-  ↓
-主循环 UDS_Process()
-  ① CAN_RxAvailable() 检查队列
-  ② CAN_GetRxFrame() 取出一帧
-  ③ 解析 SID → 分发到对应服务
-  ④ 构造响应 → CAN_SendMessage() 发送
-```
-
-| 函数 | 功能 |
-|------|------|
-| `CAN_Init()` | 初始化 FlexCAN2，配置收发邮箱，启动中断接收 |
-| `CAN_SendMessage(id, data, len)` | 轮询发送 CAN 消息（阻塞） |
-| `CAN_RxAvailable()` | 检查接收队列中是否有数据（1=有 / 0=无） |
-| `CAN_GetRxFrame(frame)` | 从队列取出一帧数据（消费） |
+**环形队列：** 中断（ISR）写队列，主循环读队列处理。
 
 ### Flash 封装模块 (`flash_app.h / flash_app.c`)
 
-基于 NXP C40ASF Flash 驱动的封装层，提供安全的 Flash 操作接口。
-
-**Flash 地址规划：**
-```
-0x00000000 ┌───────────────────┐
-           │  Bootloader 区域   │  约 64KB
-0x00010000 ├───────────────────┤  ← App 起始地址
-           │                   │
-           │  App 区域         │  约 448KB
-           │                   │
-0x00080000 └───────────────────┘
-```
-
-**Flash 对齐规则（S32K144 P-Flash）：**
+基于 NXP C40ASF Flash 驱动。
 
 | 操作 | 地址对齐 | 大小对齐 |
 |------|----------|----------|
@@ -232,313 +371,88 @@ CAN_Callback (ISR)
 | 函数 | 功能 |
 |------|------|
 | `FlashApp_Init()` | 初始化 Flash 驱动 |
-| `FlashApp_Erase(addr, size)` | 擦除指定区域（自动对齐） |
+| `FlashApp_Erase(addr, size)` | 擦除指定区域，拒绝擦除 Bootloader 区 |
 | `FlashApp_Write(addr, data, size)` | 写入数据（必须 8 字节对齐） |
-| `FlashApp_Verify(addr, expected, size)` | 读回校验 Flash 数据 |
-
-**安全机制：**
-- 禁止擦除 Bootloader 区域（`addr < 0x00010000` 直接返回失败）
-- 写入前必须擦除（Flash 只能从 1→0）
-- 所有 Flash 操作期间关中断（防止 RWW 错误）
-
-### UDS 诊断模块 (`uds.h / uds.c`)
-
-**当前支持的 UDS 服务：**
-
-| SID | 服务 | 子功能 | 说明 |
-|-----|------|--------|------|
-| **0x10** | 会话控制 | 0x01 默认 / 0x03 扩展 | 诊断会话切换，重置 S3Server 计时器 |
-| **0x11** | ECU 复位 | 0x01 硬复位 | 延时 100ms 后执行系统复位（NVIC_SystemReset） |
-| **0x22** | 读 DID | 0xF189 版本号 | 读取软件版本字符串 "V1.0" |
-| **0x2E** | 写 DID | 0xFF01 CRC32 | 写入 CRC32 值，Bootloader 校验 Flash 数据完整性 |
-| **0x34** | 请求下载 | - | 擦除目标扇区，进入升级模式（禁止跳 App） |
-| **0x36** | 传输数据 | BlockNumber | 单帧传输 4 字节，攒满 8 字节写入 Flash |
-| **0x37** | 退出传输 | - | 完成下载，等待 0x2E CRC 校验后再跳 App |
-
-**S3Server 超时机制（v0.5）：**
-- 启动后 5 秒内无有效 UDS 请求 → 尝试跳 App
-- 收到任何有效 UDS 请求 → 重置计时器为 5 秒
-- 升级中（0x34 之后、0x37 之前）→ 超时不跳，继续等待
-- App 合法性校验：MSP 必须在 SRAM 范围 (0x20000000~0x20010000)，PC 必须在 App Flash 范围 (0x00010000~0x0007FFFF)
-
-**已实现的否定响应 (NRC)：**
-
-| NRC 值 | 含义 |
-|--------|------|
-| 0x11 | 服务不支持 |
-| 0x12 | 子功能不支持 |
-| 0x13 | 消息长度错误 |
-| 0x24 | 请求序列错误（未先发 0x34 就发 0x36） |
-| 0x31 | 请求超出范围（DID/地址不支持） |
-| 0x72 | 编程失败（Flash 写入/擦除失败） |
-| 0x73 | 块序号错误（0x36 序号不连续） |
-
-**响应格式（单帧）：**
-```
-肯定响应：
-  data[0]   = PCI 低4位 = 响应数据长度 (1 + payloadLen)
-  data[1]   = SID + 0x40（表示这是响应）
-  data[2..] = payload
-
-否定响应：
-  data[0] = 0x03          (PCI = 3字节)
-  data[1] = 0x7F          (否定响应标记)
-  data[2] = 原 SID
-  data[3] = NRC 错误码
-```
-
-| 函数 | 功能 |
-|------|------|
-| `UDS_Init()` | UDS 模块初始化（启动 S3Server 倒计时） |
-| `UDS_Process()` | 主循环调用：取队列数据 → 解析 SID → 分发服务 |
-| `UDS_Tick()` | 主循环每 1ms 调用：S3Server 倒计时递减 |
-| `Jump_To_App()` | 校验 App 合法性 → 重定向 VTOR → 切换 MSP → 跳转 |
-
----
-
-## main.c 功能说明
-
-```c
-int main(void)
-{
-    /* 系统初始化 */
-    CLOCK_DRV_Init(...);       // 时钟
-    PINS_DRV_Init(...);        // 引脚
-
-    /* 外设初始化 */
-    LED_Init();                // LED
-    UART_Init();               // 串口
-    UART_SendBootMessage();    // 发送启动信息
-    CAN_Init();                // CAN（中断接收 + 环形队列）
-    FlashApp_Init();           // Flash 驱动
-    UDS_Init();                // UDS 诊断服务（启动 S3Server 倒计时）
-
-    /* 主循环 */
-    for (;;)
-    {
-        UDS_Process();         // UDS 处理（有数据才解析）
-        UDS_Tick();           // S3Server 超时计时（每毫秒减 1）
-        OSIF_TimeDelay(1);    // 1ms 延时（作为计时基准）
-
-        /* 每 500ms 翻转 LED（心跳指示） */
-        static uint16_t ledCounter = 0;
-        ledCounter++;
-        if (ledCounter >= 500U) {
-            ledCounter = 0;
-            LED_ToggleBoth();
-        }
-    }
-}
-```
-
----
-
-## UDS 测试清单（已全部通过 ✅）
-
-**测试环境：** CAN 分析仪 / CAN 卡，波特率 500 kbps，ID 过滤关闭。
-
-### 正响应测试
-
-| # | 发送 (ID=0x7E0) | 期望回复 (ID=0x123) | 验证内容 | 状态 |
-|---|------------------|----------------------|----------|------|
-| 1 | `02 10 03 00 00 00 00 00` | `06 50 03 00 32 01 F4 00` | 扩展会话：P2=50ms, P2*=500ms | ✅ |
-| 2 | `02 10 01 00 00 00 00 00` | `06 50 01 00 32 01 F4 00` | 默认会话 | ✅ |
-| 3 | `03 22 F1 89 00 00 00 00` | `07 62 F1 89 56 31 2E 30` | 读版本号 "V1.0" (ASCII) | ✅ |
-| 4 | `02 11 01 00 00 00 00 00` | `02 51 01 00 00 00 00 00` | ECU 复位正响应（暂未执行复位） | ✅ |
-
-### 否定响应测试
-
-| # | 发送 (ID=0x7E0) | 期望回复 (ID=0x123) | 验证内容 | 状态 |
-|---|------------------|----------------------|----------|------|
-| 5 | `01 3E 00 00 00 00 00 00` | `03 7F 3E 11 00 00 00 00` | 不支持的 SID → NRC=0x11 | ✅ |
-| 6 | `03 22 F1 90 00 00 00 00` | `03 7F 22 31 00 00 00 00` | 不支持的 DID → NRC=0x31 | ✅ |
-| 7 | `02 10 05 00 00 00 00 00` | `03 7F 10 12 00 00 00 00` | 不支持的子功能 → NRC=0x12 | ✅ |
-
-### 环形队列压力测试
-
-| # | 操作 | 结果 | 状态 |
-|---|------|------|------|
-| 8 | 3 帧周期 1ms 连发（发送 15 帧） | 收到 15 帧回复，零丢包 | ✅ |
-
-### Flash 下载链路测试
-
-**测试流程：**
-
-| # | 类型 | 发送 (ID=0x7E0) | 期望回复 (ID=0x123) | 验证内容 | 状态 |
-|---|------|-----------------|----------------------|----------|------|
-| 9 | 请求下载 | `07 34 00 01 00 00 00 10` | `04 74 20 04 04 00 00 00` | 擦除 0x00010000 区域 | ✅ |
-| 10 | 传输#1 | `06 36 01 AA BB CC DD 00` | `02 76 01 00 00 00 00 00` | 缓存前 4 字节 | ✅ |
-| 11 | 传输#2 | `06 36 02 11 22 33 44 00` | `02 76 02 00 00 00 00 00` | 攒满 8 字节 → 写入 Flash | ✅ |
-| 12 | 传输#3 | `06 36 03 55 66 77 88 00` | `02 76 03 00 00 00 00 00` | 缓存前 4 字节 | ✅ |
-| 13 | 传输#4 | `06 36 04 99 AA BB CC 00` | `02 76 04 00 00 00 00 00` | 攒满 8 字节 → 写入 Flash | ✅ |
-| 14 | 退出传输 | `01 37 00 00 00 00 00 00` | `01 77 00 00 00 00 00 00` | 下载完成 | ✅ |
-| 15 | 数据校验 | 调试器看 0x00010000 | `AA BB CC DD 11 22 33 44 55 66 77 88 99 AA BB CC` | Flash 内容正确 | ✅ |
-
-**错误场景测试：**
-
-| # | 类型 | 发送 (ID=0x7E0) | 期望回复 (ID=0x123) | NRC | 状态 |
-|---|------|-----------------|----------------------|-----|------|
-| 16 | 序列错误 | `06 36 01 AA BB CC DD 00`（无 0x34） | `03 7F 36 24 00 00 00 00` | 0x24 | ✅ |
-| 17 | 块号错误 | `07 34...` → `06 36 05 AA BB CC DD 00` | `03 7F 36 73 00 00 00 00` | 0x73 | ✅ |
-| 18 | 地址越界 | `07 34 00 00 00 00 00 10`（Bootloader 区域） | `03 7F 34 31 00 00 00 00` | 0x31 | ✅ |
-
-### v0.5 超时与跳转测试
-
-| # | 场景 | 操作 | 期望结果 | 状态 |
-|---|------|------|----------|------|
-| 19 | 空板超时 | 上电后不发任何请求 | 每 5 秒打印 `checking App...` → `No valid App...`，持续循环 | ✅ |
-| 20 | S3Server 重置 | 上电后立刻发 `02 10 03` | 收到 0x50 正响应，5 秒后才超时 | ✅ |
-| 21 | 升级中不超时 | 先发 0x34，然后等 5 秒 | 打印 `download in progress, wait...`，继续等待 | ✅ |
-| 22 | ECU 复位 | 发送 `02 11 01` | 收到 0x51 正响应，100ms 后系统复位 | ✅ |
-| 23 | App 合法性校验 | Flash 里有残留数据时超时 | 正确识别为非法 App，留在 Bootloader | ✅ |
-
-### v0.6 Boot 模式选择测试
-
-| # | 场景 | 操作 | 期望结果 | 状态 |
-|---|------|------|----------|------|
-| 24 | 上电先跳 App | 上电（无合法 App） | 打印启动信息 → `No valid App...` → 进入 Bootloader | ✅ |
-| 25 | CAN 通信正常 | 上电后发 `02 10 03` | 收到 0x50 正响应 | ✅ |
-| 26 | 中断恢复 | 上电后多次超时检查 | CAN 中断持续正常工作 | ✅ |
-
-### v0.7 CRC32 校验测试
-
-**CRC32 算法：CRC-32/ISO-HDLC（与 zlib.crc32() 一致）**
-
-**测试数据：** `AA BB CC DD 11 22 33 44 55 66 77 88 99 AA BB CC`
-**计算方法：** Python `zlib.crc32(data) & 0xFFFFFFFF`
-
-| # | 场景 | 操作 | 期望回复 (ID=0x123) | 验证内容 | 状态 |
-|---|------|------|----------------------|----------|------|
-| 27 | CRC 校验通过 | 0x34→0x36×4→0x37→`07 2E FF 01 A3 4F 5A D0` | `04 6E FF 01 00 00 00 00` | CRC 正确，回复正响应 | ✅ |
-| 28 | CRC 校验失败 | 0x34→0x36×4→0x37→`07 2E FF 01 00 00 00 00` | `03 7F 2E 72 00 00 00 00` | CRC 错误，NRC=0x72 编程失败 | ✅ |
-| 29 | 序列错误 | 直接发 `07 2E FF 01 A3 4F 5A D0`（无 0x34/0x37） | `03 7F 2E 24 00 00 00 00` | NRC=0x24 请求序列错误 | ✅ |
-| 30 | 不支持的 DID | `07 2E F1 89 A3 4F 5A D0` | `03 7F 2E 31 00 00 00 00` | NRC=0x31 请求超出范围 | ✅ |
-
-**完整升级+CRC 流程：**
-```
-0x10 03                          扩展会话
-0x34 00 01 00 00 00 10           请求下载（addr=0x00010000, size=16）
-0x36 01 AA BB CC DD 00           传输#1
-0x36 02 11 22 33 44 00           传输#2
-0x36 03 55 66 77 88 00           传输#3
-0x36 04 99 AA BB CC 00           传输#4
-0x37 00 00 00 00 00 00           退出传输
-0x2E FF 01 A3 4F 5A D0           写 CRC32 → 校验 → 跳 App
-```
+| `FlashApp_Verify(addr, expected, size)` | 读回校验 Flash |
+| `FlashApp_CalcCRC32(addr, size)` | 查表法 CRC-32/ISO-HDLC |
 
 ---
 
 ## 快速开始
 
-### 1. 硬件准备
+### 1. 编译两个固件
 
-- S32K144EVB-Q100 开发板（或自定义 S32K144 板）
-- 8 MHz 外部晶振
-- J-Link / PEMicro 调试器
-- USB 供电
-- CAN 分析仪（如 PCAN-USB），波特率设为 500 kbps
+1. S32DS 中选中 **Debug_FLASH** 构建配置 → `Ctrl+B` 编译
+2. 切换构建配置为 **Debug_APP** → `Ctrl+B` 编译
 
-### 2. 导入工程
+### 2. 生成 CANoe 用的 app.bin
 
-```
-File → Import → Existing Projects into Workspace
-→ 选择本工程根目录 → Finish
+```powershell
+cd c:\Users\10608\Documents\NXP_S32_3.4\demo_s32k144
+& "E:\NXP\S32DS.3.4\S32DS\build_tools\gcc_v9.2\gcc-9.2-arm32-eabi\bin\arm-none-eabi-objcopy.exe" -O binary Debug_APP\demo_s32k144.elf app.bin
 ```
 
-### 3. 编译
+或者使用 S32DS 编译后自动生成的 Post-build 步骤。
 
-```
-Project → Build Project
-```
-或按 `Ctrl + B`
+### 3. 烧录 Bootloader
 
-### 4. 调试
+用 J-Link / PEMicro 下载 **Debug_FLASH** 的 elf 到板子。上电后蓝绿灯交替闪烁 = Bootloader 正常。
 
-| 配置 | 说明 |
-|------|------|
-| `Debug_FLASH` | Flash 调试（推荐，断电保存） |
-| `Debug_RAM` | RAM 调试（快速，不擦 Flash） |
+### 4. 刷写 App（可选两种方式）
 
-### 5. UDS 通信测试
+**方式 A：J-Link 直接烧**
+直接烧 Debug_APP 的 elf（最快，开发调试）。
 
-参见上方"UDS 测试清单"，用 CAN 工具发送测试帧，检查回复是否匹配。
+**方式 B：CANoe UDS 刷写（真实升级流程）**
+- 上电 Bootloader → CANoe 开始测量 → 自动下载
+- 或 App 正常运行 → 串口发 **U** → 系统复位 → Bootloader 等待 → CANoe 刷写
 
 ---
 
-## Git 保存步骤
+## 快速测试清单
 
-本阶段完成后，建议执行以下命令保存（Windows PowerShell / Git Bash）：
+| # | 场景 | 操作 | 预期结果 |
+|---|------|------|----------|
+| 1 | 空板（无 App）上电 | 烧 Bootloader，不烧 App | 蓝绿灯 500ms 交替闪，每 5 秒打印 `No valid App` |
+| 2 | 有 App 上电 | Bootloader + App 都烧好 | 打印 Boot 信息 → `Jumping to App...` → 进入 App |
+| 3 | App LED 指示 | 观察 LED | 蓝灯常亮，绿灯 200ms 快闪 |
+| 4 | App 串口升级 | 串口发 `U` | App 打印 `Upgrade triggered...` → 复位 → Bootloader 打印 `Upgrade flag detected` |
+| 5 | CANoe 自动刷写 | CANoe 开始测量 | 自动 6 步流程 → 完成后复位 → 新 App 启动 |
 
-```powershell
-# 1. 进入项目目录
-cd c:\Users\10608\Documents\NXP_S32_3.4\demo_s32k144
+---
 
-# 2. 查看当前改动
-git status
+## Git 忽略规则（已在 .gitignore 中配置）
 
-# 3. 添加所有改动
-git add -A
+**✅ 提交：**
+- `src/` 所有代码
+- `board/` 配置
+- `Project_Settings/Linker_Files/` 两个链接脚本
+- `.project` / `.cproject`
+- `app.bin` / `uds_download.can/.cbf` / `uds_frames.csv`
+- `*.py` 工具脚本
+- `.gitignore` / `README.md`
 
-# 4. 提交（阶段标记：v0.6 Boot 模式选择）
-git commit -m "feat: v0.7 固件 CRC32 校验（UDS 0x2E WriteDID）
-                 - 新增 FlashApp_CalcCRC32()（CRC-32/ISO-HDLC 查表法）
-                 - 新增 UDS 0x2E 服务，DID 0xFF01 用于 CRC32 校验
-                 - 0x37 退出传输后不再直接跳 App，等 0x2E 校验通过
-                 - CRC 不一致返回 NRC=0x72，防止坏固件运行
-                 - 30 项测试全部通过"
-
-# 5. (可选) 打标签
-git tag -a v0.7-crc32-verify -m "固件 CRC32 校验完成"
-
-# 6. (可选) 推送到远程仓库
-git push origin main
-git push origin --tags
-```
+**🚫 忽略：**
+- `Debug_FLASH/` / `Debug_APP/` / `Debug_RAM/` 编译产物
+- `Debug_Configurations/` 调试配置
+- `.settings/` IDE 偏好
+- `SDK/` NXP SDK 本地链接
+- `Doxygen/` / `*.mex` 生成文件
 
 ---
 
 ## 注意事项
 
-1. **外部晶振**：本工程使用 8 MHz 外部晶振。如使用其他频率，需修改 `clock_config.c` 中 `soscConfig.freq` 并重新计算 SPLL 倍频。
-2. **CAN 时钟**：FlexCAN2 的 PE 时钟由 `peripherals_flexcan_config_1.c` 中 `pe_clock = FLEXCAN_CLK_SOURCE_OSC` 指定（8 MHz），与 PCC 层的 `clkSrc` 无关。
-3. **不要手动修改 `board/` 目录下带 "This file was generated by..." 注释的文件**，否则下次用 Config Tools 更新时会被覆盖。
-4. **OSIF 模式**：当前为裸机模式。如需切换为 FreeRTOS，在预处理符号中定义 `USING_OS_FREERTOS`。
-5. **CAN 接收关键**：`FLEXCAN_DRV_Receive()` 必须在 `ConfigRxMb()` 之后调用，否则 MB 状态不是 `RX_BUSY`，中断不会触发回调。回调中需再次调用以恢复接收能力。
-6. **UDS PCI 字段**：单帧时 PCI 低 4 位 = 有效数据长度（SID + 参数之和），注意区分"请求长度"和"响应长度"。
-7. **Flash 分区**：App 起始地址 0x00010000，擦除对齐 4KB，写入对齐 8 字节。Flash 操作期间必须关中断。
-8. **S3Server 超时**：Bootloader 启动后 5 秒内无 UDS 请求则尝试跳 App。收到任何有效 UDS 都会重置计时器。
-9. **App 合法性**：MSP 必须在 SRAM (0x20000000~0x20010000)，PC 必须在 App Flash (0x00010000~0x0007FFFF)，否则留在 Bootloader。
-10. **NXP SDK 缺失 CMSIS**：S32K144 SDK 的 s32_core_cm4.h 不提供 `__set_MSP()` 和 `NVIC_SystemReset()`，需自行用内联汇编实现。
-11. **系统复位实现**：通过写 SCB->AIRCR (VECTKEY=0x05FA + SYSRESETREQ=1) 触发，参考 SDK 的 `system_S32K144.c::SystemSoftwareReset()`。
-12. **CRC32 校验**：使用 CRC-32/ISO-HDLC 算法（与 zlib.crc32() 一致），多项式 0xEDB88320，初始值 0xFFFFFFFF，输出异或 0xFFFFFFFF。上位机用 Python `zlib.crc32(data) & 0xFFFFFFFF` 计算。
-13. **升级流程**：0x34→0x36×N→0x37→0x2E(CRC32)→跳 App。0x37 不再直接跳 App，必须等 CRC32 校验通过。
-
----
-
-## 下一阶段计划
-
-### v0.8：完善与增强
-1. **Bootloader 安全加固**：
-   - 防止回滚（版本号比较）
-   - 安全访问服务（0x27）
-2. **超时与异常处理**：
-   - CAN 接收帧超时（0x36 传输间隔超过 P2* 超时）
-   - 0x34 后无 0x37 完成的会话清理
-   - 看门狗（WDOG）保护
-3. **Boot 模式选择增强**：
-   - 上电自检是否有升级标志（Flash 标志位）
-   - 跳 App 失败后的恢复策略
-4. **多帧传输支持（ISO 14229-2 扩展）**：
-   - 0x34 大数据量请求（超过 7 字节地址+大小）
-   - 0x36 多帧数据块传输
-5. **其他 UDS 服务**：
-   - 0x27 安全访问
-   - 0x28 通信控制（禁用/启用 CAN 通信）
+1. **外部晶振 8 MHz**：改频率需修改 `clock_config.c` 并重新计算 SPLL 倍频。
+2. **CANoe 数据数组大小**：CAPL 里 `gAppData[65536]`，如果 App 超过 64KB 需增大。
+3. **App 向量表地址**：Debug_APP 链接脚本设 ORIGIN=0x00010000，Bootloader 跳转时写 `SCB->VTOR=0x00010000`，必须一致。
+4. **Flash 写入对齐**：写入地址/长度必须 8 字节对齐；Bootloader 的 0x36 按每 4 字节一帧攒满 8 字节写一次，最后一块在 0x37 里补 0xFF 到 8 字节。
+5. **CRC 算法一致性**：固件用 CRC-32/ISO-HDLC（查表），Python 用 `zlib.crc32(data) & 0xFFFFFFFF`，CAPL 用相同多项式 0xEDB88320，三者结果必须完全一致。
+6. **跳转前最小化操作**：Jump_To_App() 只做关全局中断、设 VTOR、设 MSP、跳转；不要用 SDK 的 Deinit 函数，不要操作 NVIC ICER/ICPR，避免状态卡死。
+7. **ECU Reset vs 直接跳转**：推荐走 0x11 复位（完整硬件复位循环）再跳 App，不建议在 UDS 上下文直接 Jump_To_App()，容易因残留状态卡死。
 
 ---
 
 ## 许可证
 
-本项目基于 NXP S32SDK 生成，SDK 源码版权归 NXP 所有，遵循 SDK 自带许可条款。
-
-App 代码部分（src/ 目录下用户自行编写的代码）遵循自由使用原则。
+SDK 源码版权归 NXP 所有，遵循 SDK 自带许可条款。`src/` 目录下用户编写的代码遵循自由使用原则。

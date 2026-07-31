@@ -19,6 +19,12 @@
 void UART_Init(void);
 
 /**
+ * @brief  UART 反初始化
+ * @note   关闭 LPUART1，用于 Bootloader 跳 App 前清理
+ */
+void UART_Deinit(void);
+
+/**
  * @brief  通过轮询模式发送数据
  * @param  data: 要发送的数据缓冲区指针
  * @param  len:  数据长度（字节）
@@ -35,5 +41,12 @@ void UART_SendString(const char *str);
  * @brief  发送启动信息（ASCII 字符）
  */
 void UART_SendBootMessage(void);
+
+/**
+ * @brief  非阻塞接收一个字节
+ * @param  outByte: 输出接收到的字节
+ * @return 1=收到数据, 0=无数据
+ */
+uint8_t UART_ReceiveByte(uint8_t *outByte);
 
 #endif /* UART_H */

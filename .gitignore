@@ -3,9 +3,12 @@
 # 适用于 S32K144 最小系统空白模板
 # ============================================
 
-# ---- 编译产物 ----
+# ---- 编译产物目录 ----
 Debug_FLASH/
+Debug_APP/
 Debug_RAM/
+
+# ---- 编译生成的中间文件 ----
 *.o
 *.obj
 *.elf
@@ -15,11 +18,23 @@ Debug_RAM/
 *.su
 *.lst
 
-# ---- 自动生成的 IDE 文件 ----
-.settings/language.settings.xml
-.settings/*.prefs
+# ---- 自动生成的 IDE 配置 ----
+Debug_Configurations/
+.settings/
 .cproject.bak
 .project.bak
+description.txt
+
+# ---- 自动生成的 SDK 配置（由 S32DS 自动生成） ----
+SDK/
+
+# ---- 生成的文档目录 ----
+Doxygen/
+
+# ---- MATLAB/Simulink 缓存 ----
+*.mex
+*.slxc
+*.autosave
 
 # ---- 操作系统/编辑器临时文件 ----
 *.swp
@@ -31,3 +46,7 @@ Thumbs.db
 # ---- 备份文件 ----
 *.bak
 *.orig
+
+# ---- 以下文件虽然是编译产物，但需要提交 ----
+# （app.bin 是 CANoe 刷写时要用的固件文件）
+!app.bin

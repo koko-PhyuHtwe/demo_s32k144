@@ -29,6 +29,7 @@ static flexcan_msgbuff_t canRxBuffer;
 static can_frame_t canRxQueue[CAN_RX_QUEUE_SIZE]; /* 存储数组（货架） */
 static volatile uint8_t canRxHead = 0;             /* 写指针（中断用） */
 static volatile uint8_t canRxTail = 0;             /* 读指针（主循环用） */
+static uint8_t canInitialized = 0;                 /* CAN 初始化标志 */
 
 /* ==================== 静态函数声明 ==================== */
 
@@ -65,6 +66,21 @@ void CAN_Init(void)
 
     /* 启动接收：设置 MB 状态为 RX_BUSY，使能 MB 级中断 */
     FLEXCAN_DRV_Receive(CAN_INSTANCE, CAN_RX_MB_IDX, &canRxBuffer);
+
+    /* 标记已初始化 */
+    canInitialized = 1;
+}
+
+/**
+ * @brief  CAN 反初始化
+ * @note   关闭 FlexCAN2，用于 Bootloader 跳 App 前清理
+ */
+void CAN_Deinit(void)
+{
+    if (canInitialized) {
+        FLEXCAN_DRV_Deinit(CAN_INSTANCE);
+        canInitialized = 0;
+    }
 }
 
 /**

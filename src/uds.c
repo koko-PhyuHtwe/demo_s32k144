@@ -12,6 +12,7 @@
 #include "osif.h"
 #include "interrupt_manager.h"
 #include "device_registers.h"
+#include "app.h"
 
 /* ==================== CMSIS 兼容函数（NXP SDK 不提供，自己实现） ==================== */
 
@@ -327,6 +328,10 @@ static void UDS_HandleWriteDID(const can_frame_t *frame)
     /* CRC 一致，校验通过 */
     UART_SendString("CRC OK\r\n");
 
+    /* CRC 校验通过，清除升级标志 */
+    UART_SendString("Clearing upgrade flag...\r\n");
+    FlashApp_Erase(UPGRADE_FLAG_ADDR, 0x1000U);
+
     /* 正响应：DID + status(0=pass) */
     uint8_t payload[3];
     payload[0] = (uint8_t)(did >> 8);
@@ -335,10 +340,11 @@ static void UDS_HandleWriteDID(const can_frame_t *frame)
 
     UDS_SendPositiveResponse(UDS_SID_WRITE_DID, payload, 3);
 
-    /* CRC 校验通过，延时后跳转到 App */
-    UART_SendString("Jumping to App...\r\n");
-    OSIF_TimeDelay(100);
-    Jump_To_App();
+    /* 等待 CANoe Step 6 发送 0x11 ECU Reset 触发完整复位，
+       然后 Bootloader 重启后走正常 "No upgrade flag → 跳转 App" 流程 */
+    UART_SendString("Waiting for ECU Reset (Step 6)...\r\n");
+
+    /* 不直接跳转！防止 UDS 上下文跳转时状态未清理干净导致卡死 */
 }
 
 /* ==================== 下载服务实现 ==================== */
@@ -468,11 +474,8 @@ static void UDS_HandleTransferData(const can_frame_t *frame)
         dataBufferIndex = 0U;
     }
 
-    /* 块序号 +1（0xFF 后绕回 1） */
+    /* 块序号 +1（自然溢出: 255 → 0 → 1 → 2 → ...） */
     blockCounter++;
-    if (blockCounter == 0U) {
-        blockCounter = 1U;
-    }
 
     /* 回复正响应 */
     uint8_t payload[1];
@@ -634,17 +637,19 @@ void Jump_To_App(void)
         return;
     }
 
-    /* 3. 关闭所有中断 */
+    /* 3. 发送跳转提示 */
     UART_SendString("Jumping to App...\r\n");
+
+    /* 4. 关闭全局中断，防止跳转后旧中断触发 */
     INT_SYS_DisableIRQGlobal();
 
-    /* 4. 重定向向量表到 App 地址 */
+    /* 5. 重定向向量表到 App 地址 */
     S32_SCB->VTOR = APP_FLASH_BASE;
 
-    /* 5. 设置主栈指针 */
+    /* 6. 设置主栈指针为 App 栈顶 */
     __set_MSP(appMsp);
 
-    /* 6. 跳转到 App 的 Reset_Handler */
+    /* 7. 跳转到 App 的 Reset_Handler（不会返回） */
     ((void (*)(void))appPc)();
 
     /* 不会执行到这里 */

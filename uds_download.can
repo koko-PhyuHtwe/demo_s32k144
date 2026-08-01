@@ -14,6 +14,10 @@ variables
   long CRC32Table[256];
   byte gSid;
   byte gNrc;
+
+  /* 0x27 安全访问相关 */
+  word gSeed;     /* Bootloader 下发的种子 */
+  word gKey;      /* 计算出的密钥 */
 }
 
 on start
@@ -37,6 +41,8 @@ on start
   gBlockNum = 1;
   gOffset = 0;
   gRetryCount = 0;
+  gSeed = 0;
+  gKey = 0;
   setTimer(gTimer, 100);
 }
 
@@ -74,48 +80,64 @@ on timer gTimer
   switch (gState)
   {
     case 0:
-      write("[Step 1/6] Start Extended Session...");
+      write("[Step 1/7] Start Extended Session...");
       SendFrame(0x02, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00);
       gState = 100;
       setTimer(gTimer, 200);
       break;
 
     case 1:
-      write("[Step 2/6] Request Download (addr=0x00010000, size=%d)...", gAppSize);
-      SendFrame(0x07, 0x34, 0x00, 0x01, 0x00, 0x00,
-               (byte)(gAppSize >> 8), (byte)(gAppSize & 0xFF));
+      write("[Step 2/7] Security Access - Request Seed...");
+      SendFrame(0x02, 0x27, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00);
       gState = 200;
-      setTimer(gTimer, 1000);
-      break;
-
-    case 2:
-      SendTransferData();
-      break;
-
-    case 3:
-      write("[Step 4/6] Request Transfer Exit...");
-      SendFrame(0x01, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
-      gState = 400;
       setTimer(gTimer, 200);
       break;
 
-    case 4:
-      write("[Step 5/6] Write DID 0xFF01 (CRC32=0x%08X)...", gCrc32);
-      SendFrame(0x07, 0x2E, 0xFF, 0x01,
-               (byte)(gCrc32 >> 24), (byte)(gCrc32 >> 16),
-               (byte)(gCrc32 >> 8),  (byte)(gCrc32 & 0xFF));
-      gState = 500;
+    case 2:
+      write("[Step 3/7] Security Access - Send Key (0x%04X)...", gKey);
+      SendFrame(0x04, 0x27, 0x02,
+               (byte)(gKey >> 8), (byte)(gKey & 0xFF),
+               0x00, 0x00, 0x00);
+      gState = 300;
+      setTimer(gTimer, 200);
+      break;
+
+    case 3:
+      write("[Step 4/7] Request Download (addr=0x00010000, size=%d)...", gAppSize);
+      SendFrame(0x07, 0x34, 0x00, 0x01, 0x00, 0x00,
+               (byte)(gAppSize >> 8), (byte)(gAppSize & 0xFF));
+      gState = 400;
       setTimer(gTimer, 1000);
       break;
 
+    case 4:
+      SendTransferData();
+      break;
+
     case 5:
-      write("[Step 6/6] ECU Reset...");
-      SendFrame(0x02, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00);
+      write("[Step 6/7] Request Transfer Exit...");
+      SendFrame(0x01, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
       gState = 600;
-      setTimer(gTimer, 300);
+      setTimer(gTimer, 200);
       break;
 
     case 6:
+      write("[Step 7/7] Write DID 0xFF01 (CRC32=0x%08X)...", gCrc32);
+      SendFrame(0x07, 0x2E, 0xFF, 0x01,
+               (byte)(gCrc32 >> 24), (byte)(gCrc32 >> 16),
+               (byte)(gCrc32 >> 8),  (byte)(gCrc32 & 0xFF));
+      gState = 700;
+      setTimer(gTimer, 1000);
+      break;
+
+    case 7:
+      write("[Final] ECU Reset...");
+      SendFrame(0x02, 0x11, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00);
+      gState = 800;
+      setTimer(gTimer, 300);
+      break;
+
+    case 8:
       write("");
       write("========================================");
       write("  Download Complete!");
@@ -132,31 +154,44 @@ on timer gTimer
       gState = 0; setTimer(gTimer, 100); break;
 
     case 200:
-      write("ERROR: 0x34 timeout, retry...");
+      write("ERROR: 0x27 01 timeout, retry...");
       gRetryCount++;
       if (gRetryCount > 3) { stop(); break; }
       gState = 1; setTimer(gTimer, 100); break;
 
     case 300:
-      write("ERROR: Block %d timeout, retry...", gBlockNum);
+      write("ERROR: 0x27 02 timeout, retry...");
       gRetryCount++;
       if (gRetryCount > 3) { stop(); break; }
-      gBlockNum--; gOffset -= 4;
-      gState = 2; setTimer(gTimer, 50); break;
+      /* 重新请求种子 */
+      gState = 1; setTimer(gTimer, 100); break;
 
     case 400:
-      write("ERROR: 0x37 timeout, retry...");
+      write("ERROR: 0x34 timeout, retry...");
       gRetryCount++;
       if (gRetryCount > 3) { stop(); break; }
       gState = 3; setTimer(gTimer, 100); break;
 
     case 500:
+      write("ERROR: Block %d timeout, retry...", gBlockNum);
+      gRetryCount++;
+      if (gRetryCount > 3) { stop(); break; }
+      gBlockNum--; gOffset -= 4;
+      gState = 4; setTimer(gTimer, 50); break;
+
+    case 600:
+      write("ERROR: 0x37 timeout, retry...");
+      gRetryCount++;
+      if (gRetryCount > 3) { stop(); break; }
+      gState = 5; setTimer(gTimer, 100); break;
+
+    case 700:
       write("ERROR: 0x2E timeout, retry...");
       gRetryCount++;
       if (gRetryCount > 3) { stop(); break; }
-      gState = 4; setTimer(gTimer, 100); break;
+      gState = 6; setTimer(gTimer, 100); break;
 
-    case 600:
+    case 800:
       write("INFO: ECU Reset confirmed, waiting for App...");
       break;
   }
@@ -195,46 +230,67 @@ on message 0x123
       break;
 
     case 200:
-      if (gSid == 0x74)
+      /* 0x27 01 正响应：PCI 67 01 <seed_hi> <seed_lo> */
+      if (gSid == 0x67 && this.byte(2) == 0x01)
       {
-        write("  [OK] 0x74 Download Ready");
-        gState = 2; setTimer(gTimer, 50);
+        gSeed = (this.byte(3) << 8) | this.byte(4);
+        /* 密钥算法：key = (seed + 0x1111) & 0xFFFF */
+        gKey = (gSeed + 0x1111) & 0xFFFF;
+        write("  [OK] 0x67 Seed=0x%04X, computed Key=0x%04X", gSeed, gKey);
+        gState = 2; setTimer(gTimer, 100);
       }
       break;
 
     case 300:
+      /* 0x27 02 正响应：PCI 67 02 */
+      if (gSid == 0x67 && this.byte(2) == 0x02)
+      {
+        write("  [OK] 0x67 Security Unlocked");
+        gState = 3; setTimer(gTimer, 100);
+      }
+      break;
+
+    case 400:
+      if (gSid == 0x74)
+      {
+        write("  [OK] 0x74 Download Ready");
+        gState = 4; setTimer(gTimer, 50);
+      }
+      break;
+
+    case 500:
       if (gSid == 0x76)
       {
         if ((gBlockNum % 500) == 0)
         {
           write("  [Progress] %d / %d", gBlockNum, gTotalBlocks);
         }
-        gState = 2; setTimer(gTimer, 1);
-      }
-      break;
-
-    case 400:
-      if (gSid == 0x77)
-      {
-        write("  [OK] 0x77 Transfer Exit");
-        gState = 4; setTimer(gTimer, 100);
-      }
-      break;
-
-    case 500:
-      if (gSid == 0x6E)
-      {
-        write("  [OK] 0x6E CRC32 PASSED!");
-        write("  -> Bootloader jumping to App...");
-        gState = 5; setTimer(gTimer, 200);
+        gState = 4; setTimer(gTimer, 1);
       }
       break;
 
     case 600:
+      if (gSid == 0x77)
+      {
+        write("  [OK] 0x77 Transfer Exit");
+        gState = 6; setTimer(gTimer, 100);
+      }
+      break;
+
+    case 700:
+      if (gSid == 0x6E)
+      {
+        write("  [OK] 0x6E CRC32 PASSED!");
+        write("  -> Bootloader jumping to App...");
+        gState = 7; setTimer(gTimer, 200);
+      }
+      break;
+
+    case 800:
       if (gSid == 0x51)
       {
         write("  [OK] 0x51 ECU Reset, waiting for App...");
-        gState = 6; setTimer(gTimer, 1000);
+        gState = 8; setTimer(gTimer, 1000);
       }
       break;
   }
@@ -268,12 +324,12 @@ SendTransferData()
 
   if (gOffset >= gAppSize)
   {
-    write("[Step 3/6] Data Transfer Complete (%d blocks)", gTotalBlocks);
-    gState = 3; setTimer(gTimer, 100);
+    write("[Step 5/7] Data Transfer Complete (%d blocks)", gTotalBlocks);
+    gState = 5; setTimer(gTimer, 100);
   }
   else
   {
-    gState = 300; setTimer(gTimer, 50);
+    gState = 500; setTimer(gTimer, 50);
   }
 }
 

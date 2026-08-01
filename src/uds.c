@@ -64,6 +64,7 @@ static void NVIC_SystemReset(void)
 static void UDS_HandleSessionControl(const can_frame_t *frame);
 static void UDS_HandleECUReset(const can_frame_t *frame);
 static void UDS_HandleReadDID(const can_frame_t *frame);
+static void UDS_HandleSecurityAccess(const can_frame_t *frame);
 static void UDS_HandleWriteDID(const can_frame_t *frame);
 static void UDS_HandleRequestDownload(const can_frame_t *frame);
 static void UDS_HandleTransferData(const can_frame_t *frame);
@@ -85,6 +86,12 @@ static uint8_t  blockCounter              = 1U;    /* 期望的块序号 */
 static uint8_t  dataBuffer[8];                    /* 数据缓存（攒8字节写一次） */
 static uint8_t  dataBufferIndex           = 0U;   /* 缓存当前字节数 */
 
+/* ==================== 0x27 安全访问状态 ==================== */
+static uint8_t  securityUnlocked          = 0U;   /* 0=锁定, 1=已解锁 */
+static uint16_t securitySeed              = 0U;   /* 当前下发的种子 */
+static uint8_t  securitySeedRequested     = 0U;   /* 0=未发种子, 1=已发种子待校验 */
+static uint8_t  securityAttemptCounter    = 0U;   /* 失败计数器 */
+
 /* ==================== S3Server 超时管理 ==================== */
 static volatile uint32_t s3ServerTimer = 0U;  /* 剩余超时时间 (ms) */
 static uint8_t bootloaderActive = 0U;          /* 0=可以跳App, 1=正在升级，禁止跳 */
@@ -98,6 +105,12 @@ void UDS_Init(void)
 {
     s3ServerTimer = S3_SERVER_TIMEOUT_MS;  /* 启动 S3Server 倒计时 */
     bootloaderActive = 0U;
+
+    /* 安全访问初始化为锁定状态 */
+    securityUnlocked       = 0U;
+    securitySeed           = 0U;
+    securitySeedRequested  = 0U;
+    securityAttemptCounter = 0U;
 }
 
 /**
@@ -137,6 +150,10 @@ void UDS_Process(void)
 
         case UDS_SID_READ_DID:
             UDS_HandleReadDID(&frame);
+            break;
+
+        case UDS_SID_SECURITY_ACCESS:
+            UDS_HandleSecurityAccess(&frame);
             break;
 
         case UDS_SID_WRITE_DID:
@@ -269,6 +286,117 @@ static void UDS_HandleReadDID(const can_frame_t *frame)
 }
 
 /**
+ * @brief  处理 0x27 安全访问（seed-key 解锁）
+ * @note   子功能 0x01 请求种子：02 27 01
+ *                 正响应：04 67 01 <seed_hi> <seed_lo>
+ *         子功能 0x02 发送密钥：04 27 02 <key_hi>  <key_lo>
+ *                 正响应：02 67 02
+ *         密钥算法：key = (seed + 0x1111) & 0xFFFF
+ *
+ *         状态机：
+ *           LOCKED --(0x27 01)--> SEED_SENT --(0x27 02 校验通过)--> UNLOCKED
+ *                                     |
+ *                                     +--(0x27 02 校验失败)--> LOCKED
+ *
+ *         未解锁时 0x34 请求下载会返回 NRC=0x33
+ */
+static void UDS_HandleSecurityAccess(const can_frame_t *frame)
+{
+    uint8_t pci     = frame->data[0];
+    uint8_t dataLen = pci & 0x0FU;
+    uint8_t subFunc = frame->data[2];
+
+    /* 只支持子功能 0x01（请求种子）和 0x02（发送密钥） */
+    if ((subFunc != UDS_SECURITY_REQUEST_SEED) &&
+        (subFunc != UDS_SECURITY_SEND_KEY)) {
+        UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_SUBFUNCTION_NOT_SUPPORTED);
+        return;
+    }
+
+    /* 按子功能校验长度：
+     *   0x01 请求种子：SID + subFunc = 2 字节
+     *   0x02 发送密钥：SID + subFunc + 2字节key = 4 字节
+     */
+    if (subFunc == UDS_SECURITY_REQUEST_SEED) {
+        if (dataLen != 2U) {
+            UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_INVALID_MESSAGE_LENGTH);
+            return;
+        }
+    } else {
+        if (dataLen != 4U) {
+            UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_INVALID_MESSAGE_LENGTH);
+            return;
+        }
+    }
+
+    /* 子功能 0x01：请求种子 */
+    if (subFunc == UDS_SECURITY_REQUEST_SEED) {
+        /* 超过失败重试上限，拒绝再次下发种子 */
+        if (securityAttemptCounter >= UDS_SECURITY_MAX_ATTEMPTS) {
+            UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_EXCEEDED_NUMBER_OF_ATTEMPTS);
+            return;
+        }
+
+        /* 生成种子：用系统 tick 作为伪随机源（项目简化实现） */
+        securitySeed = (uint16_t)(OSIF_GetMilliseconds() & 0xFFFFU);
+        if (securitySeed == 0U) {
+            securitySeed = 0x1234U;  /* 避免 0 种子 */
+        }
+
+        /* 标记已下发种子，等待密钥 */
+        securitySeedRequested = 1U;
+        securityUnlocked      = 0U;
+
+        /* 正响应：子功能 + 2字节种子（大端） */
+        uint8_t payload[3];
+        payload[0] = subFunc;
+        payload[1] = (uint8_t)(securitySeed >> 8);
+        payload[2] = (uint8_t)(securitySeed & 0xFFU);
+
+        UDS_SendPositiveResponse(UDS_SID_SECURITY_ACCESS, payload, 3);
+        return;
+    }
+
+    /* 子功能 0x02：发送密钥 */
+    /* 必须先请求过种子才能发密钥 */
+    if (securitySeedRequested != 1U) {
+        UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_REQUEST_SEQUENCE_ERROR);
+        return;
+    }
+
+    /* 提取上位机发送的密钥（大端） */
+    uint16_t recvKey = ((uint16_t)frame->data[3] << 8) | frame->data[4];
+
+    /* 计算期望密钥：key = (seed + 0x1111) & 0xFFFF */
+    uint16_t expectedKey = (uint16_t)((securitySeed + UDS_SECURITY_KEY_OFFSET) & 0xFFFFU);
+
+    if (recvKey != expectedKey) {
+        /* 密钥错误：累加失败计数，锁定状态，清除种子请求标志 */
+        securityAttemptCounter++;
+        securitySeedRequested = 0U;
+        securityUnlocked      = 0U;
+
+        /* 达到上限返回 0x36，否则返回 0x35 */
+        if (securityAttemptCounter >= UDS_SECURITY_MAX_ATTEMPTS) {
+            UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_EXCEEDED_NUMBER_OF_ATTEMPTS);
+        } else {
+            UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_INVALID_KEY);
+        }
+        return;
+    }
+
+    /* 密钥正确：解锁，清零失败计数 */
+    securityUnlocked       = 1U;
+    securitySeedRequested  = 0U;
+    securityAttemptCounter = 0U;
+
+    /* 正响应：子功能 */
+    uint8_t payload[1];
+    payload[0] = subFunc;
+    UDS_SendPositiveResponse(UDS_SID_SECURITY_ACCESS, payload, 1);
+}
+
+/**
  * @brief  处理 0x2E 写 DID（用于 CRC32 校验）
  * @note   请求格式（DID 0xFF01）：
  *         data[0] = PCI = 0x06（6 字节数据）
@@ -370,6 +498,12 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
     /* 校验长度：至少 7 字节（SID + 4字节地址 + 2字节大小） */
     if (dataLen < 7U) {
         UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_INVALID_MESSAGE_LENGTH);
+        return;
+    }
+
+    /* 安全检查：必须先通过 0x27 安全访问解锁，否则拒绝下载 */
+    if (securityUnlocked != 1U) {
+        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_SECURITY_ACCESS_DENIED);
         return;
     }
 

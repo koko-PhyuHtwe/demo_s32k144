@@ -3,7 +3,7 @@
 基于 S32 Design Studio (S32DS.3.4) + S32K144 (Cortex-M4F) 的 **CAN Bootloader + App** 一体化工程。
 使用单个工程、两个构建配置，分别生成 Bootloader 和 App 固件。
 
-当前版本：**v1.0 完整 Bootloader 链路**（全部功能验证通过 ✅）。
+当前版本：**v1.1 增加 0x27 安全访问**（全部功能验证通过 ✅）。
 
 ---
 
@@ -20,7 +20,8 @@
 | v0.7 | 固件 CRC32 校验（0x2E WriteDID） | ✅ 完成 | crc32-verify |
 | v0.8 | 双构建配置 + Boot↔App 双向跳转 | ✅ 完成 | dual-build-config |
 | v0.9 | UART 中断接收 + App 触发升级（发 'U'） | ✅ 完成 | uart-upgrade-trigger |
-| **v1.0** | **CANoe 自动刷写脚本 + 完整链路验证** | ✅ 完成 | **final-canoe-script** |
+| v1.0 | CANoe 自动刷写脚本 + 完整链路验证 | ✅ 完成 | final-canoe-script |
+| **v1.1** | **0x27 安全访问（seed-key 解锁）** | ✅ 完成 | **security-access** |
 
 ---
 
@@ -209,9 +210,9 @@ demo_s32k144/
         ▼                   │ 合法         │ 不合法
 ┌────────────────────┐      ▼              ▼
 │ UDS 升级流程        │   跳转成功          ┌──────────────┐
-│ 0x10→0x34→0x36×N   │   进入 App          │ 5 秒 S3Server │
-│     →0x37→0x2E     │                     │   倒计时     │
-│     →0x11 Reset    │                     └──────┬───────┘
+│ 0x10→0x27→0x34     │   进入 App          │ 5 秒 S3Server │
+│     →0x36×N        │                     │   倒计时     │
+│     →0x37→0x2E     │                     └──────┬───────┘
 └────────┬───────────┘                            │
          │ 擦除标志位                              │ 倒计时结束
          ▼                                        ▼
@@ -237,24 +238,60 @@ demo_s32k144/
 | **0x10** | 会话控制 | 0x01 默认 / 0x03 扩展 | 切换会话，重置 S3Server 计时器 |
 | **0x11** | ECU 复位 | 0x01 硬复位 | 100ms 后 NVIC 系统复位 |
 | **0x22** | 读 DID | 0xF189 | 读版本号 "V1.0" |
+| **0x27** | 安全访问 | 0x01 请求种子 / 0x02 发送密钥 | seed-key 解锁，未解锁时 0x34 被拒绝 (NRC=0x33) |
 | **0x2E** | 写 DID | 0xFF01 (4 字节 CRC32) | 校验 App Flash 完整性，成功则清除升级标志 |
-| **0x34** | 请求下载 | 4 字节地址 + 2 字节大小 | 擦除目标扇区，进入升级模式 |
+| **0x34** | 请求下载 | 4 字节地址 + 2 字节大小 | **需先解锁**，擦除目标扇区，进入升级模式 |
 | **0x36** | 传输数据 | BlockNumber + 4 字节数据 | 攒 8 字节写一次 Flash |
 | **0x37** | 退出传输 | 无 | 补 0xFF 写入剩余数据，退出升级模式 |
 
-### 完整 UDS 升级流程（6 步）
+### 0x27 安全访问机制
+
+采用 seed-key 双步解锁机制，防止未授权刷写：
 
 ```
-Step 1: 0x10 03            → 扩展会话 (正响应 0x50 03)
-Step 2: 0x34 00 01 00 00 XX YY   → 请求下载 (addr=0x00010000, size=0xXXYY)
-                           ← 正响应 0x74 20 04 04
-Step 3: 0x36 <BlockNum> <4字节数据> × N   → 传输数据块 (正响应 0x76 <BlockNum>)
-Step 4: 0x37 00            → 退出传输 (正响应 0x77)
-Step 5: 0x2E FF 01 <CRC[3:0]>  → 写 CRC32 校验 (正响应 0x6E FF 01 00)
-                           → Bootloader: CRC OK → 清除升级标志
-Step 6: 0x11 01            → ECU 复位 (正响应 0x51 01)
-                           → 芯片完整硬件复位
-                           → Bootloader: 无标志 → 跳 App
+请求种子 (0x27 01)
+    │
+    ▼
+Bootloader 生成 2 字节随机种子 seed
+回复正响应：67 01 <seed_hi> <seed_lo>
+    │
+    ▼
+上位机计算密钥：key = (seed + 0x1111) & 0xFFFF
+发送密钥 (0x27 02 <key_hi> <key_lo>)
+    │
+    ▼
+Bootloader 校验密钥
+  ├─ 正确 → 回复 67 02，进入解锁状态，允许 0x34 下载
+  └─ 错误 → 回复 NRC=0x35 (invalidKey)，失败 3 次后锁死返回 NRC=0x36
+```
+
+**密钥算法**（项目简化实现，面试可讲）：
+```c
+key = (seed + 0x1111) & 0xFFFF
+```
+
+**状态变量**（[uds.c](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/uds.c#L89)）：
+- `securityUnlocked` — 解锁标志 (0=锁定, 1=已解锁)
+- `securitySeed` — 当前下发的种子
+- `securitySeedRequested` — 是否已发种子待校验
+- `securityAttemptCounter` — 失败重试计数 (上限 3 次)
+
+### 完整 UDS 升级流程（7 步）
+
+```
+Step 1: 0x10 03                  → 扩展会话 (正响应 0x50 03)
+Step 2: 0x27 01                  → 请求种子 (正响应 0x67 01 <seed>)
+Step 3: 0x27 02 <key>            → 发送密钥 (正响应 0x67 02)
+                                 → 解锁成功，允许下载
+Step 4: 0x34 00 01 00 00 XX YY   → 请求下载 (addr=0x00010000, size=0xXXYY)
+                                 ← 正响应 0x74 20 04 04
+Step 5: 0x36 <BlockNum> <4字节数据> × N   → 传输数据块 (正响应 0x76 <BlockNum>)
+Step 6: 0x37 00                  → 退出传输 (正响应 0x77)
+Step 7: 0x2E FF 01 <CRC[3:0]>    → 写 CRC32 校验 (正响应 0x6E FF 01 00)
+                                 → Bootloader: CRC OK → 清除升级标志
+Final : 0x11 01                  → ECU 复位 (正响应 0x51 01)
+                                 → 芯片完整硬件复位
+                                 → Bootloader: 无标志 → 跳 App
 ```
 
 ---
@@ -280,7 +317,7 @@ Step 6: 0x11 01            → ECU 复位 (正响应 0x51 01)
 
 ## CANoe 自动刷写说明
 
-提供了 [uds_download.can](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/uds_download.can)（CAPL 脚本），自动完成上述 6 步 UDS 流程。
+提供了 [uds_download.can](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/uds_download.can)（CAPL 脚本），自动完成上述 7 步 UDS 流程。
 
 ### 使用方法
 
@@ -417,7 +454,7 @@ cd c:\Users\10608\Documents\NXP_S32_3.4\demo_s32k144
 | 2 | 有 App 上电 | Bootloader + App 都烧好 | 打印 Boot 信息 → `Jumping to App...` → 进入 App |
 | 3 | App LED 指示 | 观察 LED | 蓝灯常亮，绿灯 200ms 快闪 |
 | 4 | App 串口升级 | 串口发 `U` | App 打印 `Upgrade triggered...` → 复位 → Bootloader 打印 `Upgrade flag detected` |
-| 5 | CANoe 自动刷写 | CANoe 开始测量 | 自动 6 步流程 → 完成后复位 → 新 App 启动 |
+| 5 | CANoe 自动刷写 | CANoe 开始测量 | 自动 7 步流程（含 0x27 安全解锁）→ 完成后复位 → 新 App 启动 |
 
 ---
 
@@ -450,6 +487,8 @@ cd c:\Users\10608\Documents\NXP_S32_3.4\demo_s32k144
 5. **CRC 算法一致性**：固件用 CRC-32/ISO-HDLC（查表），Python 用 `zlib.crc32(data) & 0xFFFFFFFF`，CAPL 用相同多项式 0xEDB88320，三者结果必须完全一致。
 6. **跳转前最小化操作**：Jump_To_App() 只做关全局中断、设 VTOR、设 MSP、跳转；不要用 SDK 的 Deinit 函数，不要操作 NVIC ICER/ICPR，避免状态卡死。
 7. **ECU Reset vs 直接跳转**：推荐走 0x11 复位（完整硬件复位循环）再跳 App，不建议在 UDS 上下文直接 Jump_To_App()，容易因残留状态卡死。
+8. **0x27 安全访问**：0x34 请求下载前必须先完成 0x27 seed-key 解锁，否则返回 NRC=0x33 (securityAccessDenied)。密钥算法 `key = (seed + 0x1111) & 0xFFFF`，上下位机必须一致。失败 3 次后锁定，需复位才能重试。
+9. **0x27 请求长度**：子功能 0x01 请求种子只需 2 字节 (`02 27 01`)，子功能 0x02 发送密钥需 4 字节 (`04 27 02 key_hi key_lo`)，两者长度不同，Bootloader 按子功能分别校验。
 
 ---
 

@@ -3,7 +3,7 @@
 基于 S32 Design Studio (S32DS.3.4) + S32K144 (Cortex-M4F) 的 **CAN Bootloader + App** 一体化工程。
 使用单个工程、两个构建配置，分别生成 Bootloader 和 App 固件。
 
-当前版本：**v1.1 增加 0x27 安全访问**（全部功能验证通过 ✅）。
+当前版本：**v1.2 三条跳转路径 Deinit 统一修复**（全部功能验证通过 ✅，面试可用版）。
 
 ---
 
@@ -21,7 +21,8 @@
 | v0.8 | 双构建配置 + Boot↔App 双向跳转 | ✅ 完成 | dual-build-config |
 | v0.9 | UART 中断接收 + App 触发升级（发 'U'） | ✅ 完成 | uart-upgrade-trigger |
 | v1.0 | CANoe 自动刷写脚本 + 完整链路验证 | ✅ 完成 | final-canoe-script |
-| **v1.1** | **0x27 安全访问（seed-key 解锁）** | ✅ 完成 | **security-access** |
+| v1.1 | 0x27 安全访问（seed-key 解锁） | ✅ 完成 | security-access |
+| **v1.2** | **Jump_To_App 三条路径统一 Deinit（防 HardFault）** | ✅ 完成 | **jump-deinit-unify** |
 
 ---
 
@@ -485,7 +486,7 @@ cd c:\Users\10608\Documents\NXP_S32_3.4\demo_s32k144
 3. **App 向量表地址**：Debug_APP 链接脚本设 ORIGIN=0x00010000，Bootloader 跳转时写 `SCB->VTOR=0x00010000`，必须一致。
 4. **Flash 写入对齐**：写入地址/长度必须 8 字节对齐；Bootloader 的 0x36 按每 4 字节一帧攒满 8 字节写一次，最后一块在 0x37 里补 0xFF 到 8 字节。
 5. **CRC 算法一致性**：固件用 CRC-32/ISO-HDLC（查表），Python 用 `zlib.crc32(data) & 0xFFFFFFFF`，CAPL 用相同多项式 0xEDB88320，三者结果必须完全一致。
-6. **跳转前最小化操作**：Jump_To_App() 只做关全局中断、设 VTOR、设 MSP、跳转；不要用 SDK 的 Deinit 函数，不要操作 NVIC ICER/ICPR，避免状态卡死。
+6. **跳转前 Deinit 外设（v1.2 修复）**：Jump_To_App() 在打印 `Jumping to App...` 后、关全局中断前，统一调用 `CAN_Deinit()` + `UART_Deinit()`，清理残留中断防止 App 侧 HardFault。三条调用路径（上电首次跳 / 0x2E CRC 通过跳 / 5 秒超时跳）都在此处统一处理。Deinit 内部有 `if(initialized)` 保护，未初始化时是空操作，安全。注意顺序：先打印 → 再 CAN_Deinit（残留中断风险高）→ 再 UART_Deinit → 再关全局中断 → 设 VTOR → 设 MSP → 跳转。
 7. **ECU Reset vs 直接跳转**：推荐走 0x11 复位（完整硬件复位循环）再跳 App，不建议在 UDS 上下文直接 Jump_To_App()，容易因残留状态卡死。
 8. **0x27 安全访问**：0x34 请求下载前必须先完成 0x27 seed-key 解锁，否则返回 NRC=0x33 (securityAccessDenied)。密钥算法 `key = (seed + 0x1111) & 0xFFFF`，上下位机必须一致。失败 3 次后锁定，需复位才能重试。
 9. **0x27 请求长度**：子功能 0x01 请求种子只需 2 字节 (`02 27 01`)，子功能 0x02 发送密钥需 4 字节 (`04 27 02 key_hi key_lo`)，两者长度不同，Bootloader 按子功能分别校验。

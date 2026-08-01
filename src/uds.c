@@ -744,10 +744,16 @@ void UDS_Tick(void)
  * @brief  跳转到 App
  * @note   1. 检查 App 栈顶是否合法（SRAM 范围内）
  *         2. 检查 App 复位向量是否合法（App Flash 范围内）
- *         3. 重定向向量表到 App 地址
- *         4. 设置主栈指针为 App 栈顶
- *         5. 跳转到 App 的 Reset_Handler
+ *         3. 反初始化 CAN/UART 外设，防止残留中断在 App 侧触发 HardFault
+ *         4. 重定向向量表到 App 地址
+ *         5. 设置主栈指针为 App 栈顶
+ *         6. 跳转到 App 的 Reset_Handler
  *         不会返回
+ *
+ *         三条调用路径统一在此处做 Deinit：
+ *           - 上电首次跳（main.c，CAN 未初始化，Deinit 内部 if 判空安全）
+ *           - 0x2E CRC 通过后跳（UDS_HandleWriteDID，CAN/UART 已初始化）
+ *           - S3Server 5 秒超时跳（UDS_Tick，CAN/UART 已初始化）
  */
 void Jump_To_App(void)
 {
@@ -771,19 +777,27 @@ void Jump_To_App(void)
         return;
     }
 
-    /* 3. 发送跳转提示 */
+    /* 3. 发送跳转提示（必须在 UART_Deinit 之前打印完） */
     UART_SendString("Jumping to App...\r\n");
 
-    /* 4. 关闭全局中断，防止跳转后旧中断触发 */
+    /* 4. 反初始化 CAN/UART 外设：
+     *    - 先关 CAN：FlexCAN2 残留的接收中断会在 App 侧触发 HardFault
+     *    - 再关 UART：LPUART1 残留的 RDRF/TC 中断同理
+     *    Deinit 内部有 if(initialized) 保护，未初始化时是空操作
+     */
+    CAN_Deinit();
+    UART_Deinit();
+
+    /* 5. 关闭全局中断，防止跳转后旧中断触发 */
     INT_SYS_DisableIRQGlobal();
 
-    /* 5. 重定向向量表到 App 地址 */
+    /* 6. 重定向向量表到 App 地址 */
     S32_SCB->VTOR = APP_FLASH_BASE;
 
-    /* 6. 设置主栈指针为 App 栈顶 */
+    /* 7. 设置主栈指针为 App 栈顶 */
     __set_MSP(appMsp);
 
-    /* 7. 跳转到 App 的 Reset_Handler（不会返回） */
+    /* 8. 跳转到 App 的 Reset_Handler（不会返回） */
     ((void (*)(void))appPc)();
 
     /* 不会执行到这里 */

@@ -13,7 +13,7 @@ mcu_data: s32sdk_s32k1xx_rtm_402
 processor_version: 0.0.0
 functionalGroups:
 - name: BOARD_InitPeripherals
-  UUID: 63a6488f-4429-4799-a756-c85bf8d0a7d6
+  UUID: a6d43dcb-893a-49cd-9d9d-0bb26ff0f05b
   called_from_default_init: true
   selectedCore: core0
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
@@ -48,7 +48,6 @@ instance:
         - DFlashBase: '0x10000000'
         - EERAMBase: '0x14000000'
         - CallBack: 'NULL_CALLBACK'
-    - quick_selection: 'flash_default'
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
 /* clang-format on */
 

@@ -18,9 +18,9 @@
 /* Include header files for all configured components */
 #include "clock_config.h"
 #include "pin_mux.h"
+#include "peripherals_flexcan_config_1.h"
 #include "peripherals_osif_1.h"
 #include "peripherals_lpuart_1.h"
-#include "peripherals_flexcan_config_1.h"
 #include "peripherals_flash_1.h"
 
 

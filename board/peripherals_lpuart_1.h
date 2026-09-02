@@ -27,7 +27,7 @@
 extern lpuart_state_t lpUartState1;
 
 /* External declaration of LPUART configuration structure */
-extern lpuart_user_config_t lpuart_1_InitConfig0;
+extern const lpuart_user_config_t lpuart_1_InitConfig0;
 
 
 

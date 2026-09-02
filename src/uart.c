@@ -41,7 +41,7 @@ void UART_Init(void)
 
     /* 先注册回调，再启动接收 */
     LPUART_DRV_InstallRxCallback(UART_INSTANCE, uart_rx_callback, NULL);
-    LPUART_DRV_ReceiveData(UART_INSTANCE, &g_rxByte, 1U);
+    LPUART_DRV_ReceiveData(UART_INSTANCE, (uint8_t *)&g_rxByte, 1U);
 
     /* 标记已初始化 */
     uartInitialized = 1;
@@ -72,7 +72,7 @@ void uart_rx_callback(void *driverState, uart_event_t event, void *userData)
         /* 数据已接收到，设置标志 */
         g_rxReady = 1U;
         /* 重新启动接收 */
-        LPUART_DRV_ReceiveData(UART_INSTANCE, &g_rxByte, 1U);
+        LPUART_DRV_ReceiveData(UART_INSTANCE, (uint8_t *)&g_rxByte, 1U);
     }
 }
 

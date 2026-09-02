@@ -13,7 +13,7 @@ mcu_data: s32sdk_s32k1xx_rtm_402
 processor_version: 0.0.0
 functionalGroups:
 - name: BOARD_InitPeripherals
-  UUID: 63a6488f-4429-4799-a756-c85bf8d0a7d6
+  UUID: a6d43dcb-893a-49cd-9d9d-0bb26ff0f05b
   called_from_default_init: true
   selectedCore: core0
  * BE CAREFUL MODIFYING THIS COMMENT - IT IS YAML SETTINGS FOR TOOLS **********/
@@ -43,7 +43,7 @@ instance:
     - lpuart_configuration:
       - 0:
         - name: 'lpuart_1_InitConfig0'
-        - readonly: 'false'
+        - readonly: 'true'
         - transferType: 'LPUART_USING_INTERRUPTS'
         - baudRate: '115200'
         - parityMode: 'LPUART_PARITY_DISABLED'
@@ -64,7 +64,7 @@ instance:
  */
 lpuart_state_t lpUartState1;
 
-lpuart_user_config_t lpuart_1_InitConfig0 = {
+const lpuart_user_config_t lpuart_1_InitConfig0 = {
   .transferType = LPUART_USING_INTERRUPTS,
   .baudRate = 115200UL,
   .parityMode = LPUART_PARITY_DISABLED,

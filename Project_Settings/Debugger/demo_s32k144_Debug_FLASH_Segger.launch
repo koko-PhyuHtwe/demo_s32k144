@@ -2,7 +2,7 @@
 <launchConfiguration type="ilg.gnuarmeclipse.debug.gdbjtag.jlink.launchConfigurationType">
 <booleanAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.doConnectToRunning" value="false"/>
 <booleanAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.doContinue" value="true"/>
-<booleanAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.doDebugInRam" value="false"/>
+<booleanAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.doDebugInRam" value="true"/>
 <booleanAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.doFirstReset" value="true"/>
 <booleanAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.doGdbServerAllocateConsole" value="true"/>
 <booleanAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.doGdbServerAllocateSemihostingConsole" value="true"/>
@@ -27,7 +27,7 @@
 <stringAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerDeviceEndianness" value="little"/>
 <stringAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerDeviceName" value="S32K144"/>
 <stringAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerDeviceSpeed" value="1000"/>
-<stringAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerExecutable" value="${jlink_path}/${jlink_gdbserver}"/>
+<stringAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerExecutable" value="${eclipse_home}../Drivers/Segger/JLinkGDBServerCL.exe"/>
 <intAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerGdbPortNumber" value="2331"/>
 <stringAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerLog" value=""/>
 <stringAttribute key="ilg.gnuarmeclipse.debug.gdbjtag.jlink.gdbServerOther" value="-singlerun -strict -timeout 0 -nogui"/>
@@ -62,22 +62,22 @@
 <stringAttribute key="org.eclipse.cdt.debug.mi.core.commandFactory" value="Standard (Windows)"/>
 <stringAttribute key="org.eclipse.cdt.debug.mi.core.protocol" value="mi"/>
 <booleanAttribute key="org.eclipse.cdt.debug.mi.core.verboseMode" value="false"/>
-<stringAttribute key="org.eclipse.cdt.dsf.gdb.DEBUG_NAME" value="${S32DS_ARM32_TOOLCHAIN_DIR}/bin/${arm32_cross_prefix}gdb${arm32_cross_suffix}"/>
+<stringAttribute key="org.eclipse.cdt.dsf.gdb.DEBUG_NAME" value="${S32DS_GDB_ARM32_EXE}"/>
 <booleanAttribute key="org.eclipse.cdt.dsf.gdb.UPDATE_THREADLIST_ON_SUSPEND" value="false"/>
 <intAttribute key="org.eclipse.cdt.launch.ATTR_BUILD_BEFORE_LAUNCH_ATTR" value="2"/>
 <stringAttribute key="org.eclipse.cdt.launch.COREFILE_PATH" value=""/>
 <stringAttribute key="org.eclipse.cdt.launch.DEBUGGER_REGISTER_GROUPS" value=""/>
-<stringAttribute key="org.eclipse.cdt.launch.PROGRAM_NAME" value="C:\Users\10608\Documents\NXP_S32_3.4\demo_s32k144\Debug_FLASH\demo_s32k144.elf"/>
+<stringAttribute key="org.eclipse.cdt.launch.PROGRAM_NAME" value="Debug_FLASH/demo_s32k144.elf"/>
 <stringAttribute key="org.eclipse.cdt.launch.PROJECT_ATTR" value="demo_s32k144"/>
 <booleanAttribute key="org.eclipse.cdt.launch.PROJECT_BUILD_CONFIG_AUTO_ATTR" value="false"/>
-<stringAttribute key="org.eclipse.cdt.launch.PROJECT_BUILD_CONFIG_ID_ATTR" value="com.nxp.s32ds.cle.arm.mbs.arm32.bare.exe.debug.1559595546"/>
+<stringAttribute key="org.eclipse.cdt.launch.PROJECT_BUILD_CONFIG_ID_ATTR" value="com.nxp.s32ds.cle.arm.mbs.arm32.bare.exe.debug.1072064135"/>
 <listAttribute key="org.eclipse.debug.core.MAPPED_RESOURCE_PATHS">
 <listEntry value="/demo_s32k144"/>
 </listAttribute>
 <listAttribute key="org.eclipse.debug.core.MAPPED_RESOURCE_TYPES">
 <listEntry value="4"/>
 </listAttribute>
+<stringAttribute key="org.eclipse.debug.core.source_locator_memento" value="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; standalone=&quot;no&quot;?&gt;&#13;&#10;&lt;sourceLookupDirector&gt;&#13;&#10;&lt;sourceContainers duplicates=&quot;false&quot;&gt;&#13;&#10;&lt;container memento=&quot;&amp;lt;?xml version=&amp;quot;1.0&amp;quot; encoding=&amp;quot;UTF-8&amp;quot; standalone=&amp;quot;no&amp;quot;?&amp;gt;&amp;#13;&amp;#10;&amp;lt;mapping backend_enabled=&amp;quot;true&amp;quot; name=&amp;quot;EWL&amp;quot;&amp;gt;&amp;#13;&amp;#10;&amp;lt;mapEntry memento=&amp;quot;&amp;amp;lt;?xml version=&amp;amp;quot;1.0&amp;amp;quot; encoding=&amp;amp;quot;UTF-8&amp;amp;quot; standalone=&amp;amp;quot;no&amp;amp;quot;?&amp;amp;gt;&amp;amp;#13;&amp;amp;#10;&amp;amp;lt;mapEntry backendPath=&amp;amp;quot;arm32_ewl2&amp;amp;quot; localPath=&amp;amp;quot;E:\NXP\S32DS.3.4\eclipse\../S32DS/build_tools/gcc_v6.3/gcc-6.3-arm32-eabi/../arm32_ewl2&amp;amp;quot;/&amp;amp;gt;&amp;amp;#13;&amp;amp;#10;&amp;quot;/&amp;gt;&amp;#13;&amp;#10;&amp;lt;/mapping&amp;gt;&amp;#13;&amp;#10;&quot; typeId=&quot;org.eclipse.cdt.debug.core.containerType.mapping&quot;/&gt;&#13;&#10;&lt;container memento=&quot;&amp;lt;?xml version=&amp;quot;1.0&amp;quot; encoding=&amp;quot;UTF-8&amp;quot; standalone=&amp;quot;no&amp;quot;?&amp;gt;&amp;#13;&amp;#10;&amp;lt;default/&amp;gt;&amp;#13;&amp;#10;&quot; typeId=&quot;org.eclipse.debug.core.containerType.default&quot;/&gt;&#13;&#10;&lt;/sourceContainers&gt;&#13;&#10;&lt;/sourceLookupDirector&gt;&#13;&#10;"/>
 <stringAttribute key="org.eclipse.dsf.launch.MEMORY_BLOCKS" value="&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; standalone=&quot;no&quot;?&gt;&#13;&#10;&lt;memoryBlockExpressionList context=&quot;Context string&quot;/&gt;&#13;&#10;"/>
 <stringAttribute key="process_factory_id" value="org.eclipse.cdt.dsf.gdb.GdbProcessFactory"/>
-<stringAttribute key="saved_expressions&lt;seperator&gt;Unknown" value="0x00010000"/>
 </launchConfiguration>

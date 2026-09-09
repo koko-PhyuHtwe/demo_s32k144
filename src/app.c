@@ -55,17 +55,10 @@ static void TriggerUpgrade(void)
     /* 初始化 Flash 驱动 */
     FlashApp_Init();
 
-    /* 擦除标志扇区（4KB） */
-    if (FlashApp_Erase(UPGRADE_FLAG_ADDR, FLASH_SECTOR_SIZE) != 0U)
+    /* 擦除并写入升级标志扇区（升级标志区在 Boot 保护区，需专用接口） */
+    if (FlashApp_WriteBootSector(UPGRADE_FLAG_ADDR, (const uint8_t *)flagData, 8U) != 0U)
     {
-        UART_SendString(">>> ERROR: Flash erase failed!\r\n");
-        return;
-    }
-
-    /* 写入升级标志（8 字节对齐） */
-    if (FlashApp_Write(UPGRADE_FLAG_ADDR, (const uint8_t *)flagData, 8U) != 0U)
-    {
-        UART_SendString(">>> ERROR: Flash write failed!\r\n");
+        UART_SendString(">>> ERROR: Flash write upgrade flag failed!\r\n");
         return;
     }
 

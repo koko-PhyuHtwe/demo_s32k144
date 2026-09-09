@@ -16,7 +16,7 @@ variables
   byte gNrc;
 
   /* 0x27 安全访问相关 */
-  word gSeed;     /* Bootloader 下发的种子 */
+  word gSeed;     /* Bootloader 下发的种�?*/
   word gKey;      /* 计算出的密钥 */
 }
 
@@ -30,6 +30,7 @@ on start
 
   write("========================================");
   write("  UDS Download Tool for S32K144");
+  write("  CAPL v2: resync-0x73 / timeout=200ms / retry=5");
   write("========================================");
   write("App Size    : %d bytes", gAppSize);
   write("Total Blocks: %d", gTotalBlocks);
@@ -52,11 +53,18 @@ ReadAppBin()
   long bytesRead;
 
   gAppSize = 0;
+
+  /* 先找 CANoe 工程目录下的 app.bin，找不到再回退到源码工程目�?*/
   fileHandle = openFileRead("app.bin", 1);
   if (fileHandle == 0)
   {
+    fileHandle = openFileRead("C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\app.bin", 1);
+  }
+
+  if (fileHandle == 0)
+  {
     write("ERROR: Cannot open app.bin!");
-    write("Put app.bin in the same directory as CANoe config");
+    write("Copy app.bin next to the CANoe .cfg, or into demo_s32k144 project folder");
     stop();
     return;
   }
@@ -173,11 +181,11 @@ on timer gTimer
       gState = 3; setTimer(gTimer, 100); break;
 
     case 500:
-      write("ERROR: Block %d timeout, retry...", gBlockNum);
+      write("ERROR: Block %d timeout, retry...", gBlockNum - 1);
       gRetryCount++;
-      if (gRetryCount > 3) { stop(); break; }
+      if (gRetryCount > 5) { stop(); break; }
       gBlockNum--; gOffset -= 4;
-      gState = 4; setTimer(gTimer, 50); break;
+      gState = 4; setTimer(gTimer, 10); break;
 
     case 600:
       write("ERROR: 0x37 timeout, retry...");
@@ -197,7 +205,7 @@ on timer gTimer
   }
 }
 
-on message 0x123
+on message 0x7E8
 {
   if (gState == 999) return;
 
@@ -212,6 +220,19 @@ on message 0x123
     if (gNrc == 0x78)
     {
       setTimer(gTimer, 500);
+      return;
+    }
+    /* 数据块传输中收到 0x73（块序号错误）：
+       说明固件已经收到过我们正在等待确认的那一帧，它正在等下一帧。
+       实测 gState 可能是 500（等响应中）也可能是 4（重试等待窗口），
+       但 gBlockNum / gOffset 始终指向正确的下一块，直接续发即可重同步。
+       即使偶发多发一帧，固件会再用 0x73 拒绝，本逻辑自愈，不会写错数据。 */
+    if ((gNrc == 0x73) && ((gState == 500) || (gState == 4)))
+    {
+      write("  [Resync] resume from block %d (gState=%d)", gBlockNum, gState);
+      gRetryCount = 0;
+      gState = 4;
+      setTimer(gTimer, 1);
       return;
     }
     write("Download FAILED! Stopped.");
@@ -267,6 +288,13 @@ on message 0x123
         }
         gState = 4; setTimer(gTimer, 1);
       }
+      else
+      {
+        /* 调试：打印等待数据块期间收到的非 0x76 响应（定位超时原因） */
+        write("  RX@500: %02X %02X %02X %02X %02X %02X %02X %02X",
+              this.byte(0), this.byte(1), this.byte(2), this.byte(3),
+              this.byte(4), this.byte(5), this.byte(6), this.byte(7));
+      }
       break;
 
     case 600:
@@ -304,7 +332,7 @@ SendTransferData()
 
   blockNumByte = gBlockNum & 0xFF;
 
-  /* 最后一块可能不足 4 字节，用 0xFF 补齐（和 Bootloader 0x37 处理逻辑一致） */
+  /* 最后一块可能不�?4 字节，用 0xFF 补齐（和 Bootloader 0x37 处理逻辑一致） */
   remaining = gAppSize - gOffset;
   b0 = 0xFF;
   b1 = 0xFF;
@@ -315,7 +343,7 @@ SendTransferData()
   if (remaining >= 3) b2 = gAppData[gOffset + 2];
   if (remaining >= 4) b3 = gAppData[gOffset + 3];
 
-  /* 实际数据长度（最多4字节） */
+  /* 实际数据长度（最�?字节�?*/
   if (remaining >= 4) remaining = 4;
   SendFrame(0x06, 0x36, (byte)blockNumByte, b0, b1, b2, b3, 0x00);
 
@@ -329,7 +357,7 @@ SendTransferData()
   }
   else
   {
-    gState = 500; setTimer(gTimer, 50);
+    gState = 500; setTimer(gTimer, 200);
   }
 }
 

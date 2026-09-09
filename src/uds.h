@@ -46,14 +46,12 @@
 #define UDS_SECURITY_MAX_ATTEMPTS  3U
 
 /* ==================== DID 定义 ==================== */
-#define UDS_DID_SW_VERSION       0xF189U  /* 软件版本号 */
+#define UDS_DID_SW_VERSION       0xF189U  /* 软件版本号（返回激活槽版本） */
+#define UDS_DID_ACTIVE_SLOT      0xF19AU  /* 当前激活槽号（0=A, 1=B） */
 #define UDS_DID_CRC32            0xFF01U  /* CRC32 校验请求 */
 
 /* ==================== S3Server 超时 ==================== */
 #define S3_SERVER_TIMEOUT_MS     5000U  /* 5 秒超时 */
-
-/* ==================== App 跳转 ==================== */
-#define APP_FLASH_BASE           0x00010000U  /* App 起始地址 */
 
 /* ==================== 函数声明 ==================== */
 
@@ -75,9 +73,10 @@ void UDS_Process(void);
 void UDS_Tick(void);
 
 /**
- * @brief  跳转到 App
+ * @brief  跳转到指定槽的 App
+ * @param  slotBase: 槽基地址（SLOT_A_BASE 或 SLOT_B_BASE）
  * @note   不会返回，直接跳到 App 的 Reset_Handler
  */
-void Jump_To_App(void);
+void Jump_To_App(uint32_t slotBase);
 
 #endif /* UDS_H */

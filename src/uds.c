@@ -8,6 +8,7 @@
 #include "uds.h"
 #include "can.h"
 #include "flash_app.h"
+#include "partition.h"
 #include "uart.h"
 #include "osif.h"
 #include "interrupt_manager.h"
@@ -267,22 +268,32 @@ static void UDS_HandleReadDID(const can_frame_t *frame)
     /* 提取 DID（data[2] << 8 | data[3]） */
     uint16_t did = ((uint16_t)frame->data[2] << 8) | frame->data[3];
 
-    /* 只支持 DID 0xF189（软件版本号） */
-    if (did != 0xF189U) {
-        UDS_SendNegativeResponse(UDS_SID_READ_DID, UDS_NRC_REQUEST_OUT_OF_RANGE);
+    /* DID 0xF189：软件版本号（返回激活槽版本，ASCII "Vx.0"） */
+    if (did == UDS_DID_SW_VERSION) {
+        uint32_t ver = Partition_GetActiveVersion();
+        uint8_t payload[6];
+        payload[0] = (uint8_t)(did >> 8);       /* DID 高字节 */
+        payload[1] = (uint8_t)(did & 0xFFU);    /* DID 低字节 */
+        payload[2] = 'V';
+        payload[3] = (uint8_t)('0' + (ver % 10U));  /* 个位（版本 0-9） */
+        payload[4] = '.';
+        payload[5] = '0';
+        UDS_SendPositiveResponse(UDS_SID_READ_DID, payload, 6);
         return;
     }
 
-    /* 版本号字符串（ASCII "V1.0"，4 字节，单帧放得下） */
-    uint8_t payload[6];
-    payload[0] = (uint8_t)(did >> 8);       /* DID 高字节 */
-    payload[1] = (uint8_t)(did & 0xFFU);    /* DID 低字节 */
-    payload[2] = 'V';
-    payload[3] = '1';
-    payload[4] = '.';
-    payload[5] = '0';
+    /* DID 0xF19A：当前激活槽号（0=SlotA, 1=SlotB） */
+    if (did == UDS_DID_ACTIVE_SLOT) {
+        uint8_t payload[3];
+        payload[0] = (uint8_t)(did >> 8);
+        payload[1] = (uint8_t)(did & 0xFFU);
+        payload[2] = (Partition_GetActiveSlot() == SLOT_B) ? 0x01U : 0x00U;
+        UDS_SendPositiveResponse(UDS_SID_READ_DID, payload, 3);
+        return;
+    }
 
-    UDS_SendPositiveResponse(UDS_SID_READ_DID, payload, 6);
+    /* 不支持的 DID */
+    UDS_SendNegativeResponse(UDS_SID_READ_DID, UDS_NRC_REQUEST_OUT_OF_RANGE);
 }
 
 /**
@@ -456,9 +467,16 @@ static void UDS_HandleWriteDID(const can_frame_t *frame)
     /* CRC 一致，校验通过 */
     UART_SendString("CRC OK\r\n");
 
-    /* CRC 校验通过，清除升级标志 */
-    UART_SendString("Clearing upgrade flag...\r\n");
-    FlashApp_Erase(UPGRADE_FLAG_ADDR, 0x1000U);
+    /* 提交升级：写描述表 + 翻转激活槽（原子切换） */
+    UART_SendString("Committing update to partition table...\r\n");
+    if (Partition_CommitUpdate(actualCrc, downloadTotalSize) != 0U) {
+        UART_SendString("Commit FAIL\r\n");
+        UDS_SendNegativeResponse(UDS_SID_WRITE_DID, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
+        return;
+    }
+
+    /* 清除升级标志 */
+    FlashApp_EraseBootSector(UPGRADE_FLAG_ADDR);
 
     /* 正响应：DID + status(0=pass) */
     uint8_t payload[3];
@@ -469,8 +487,8 @@ static void UDS_HandleWriteDID(const can_frame_t *frame)
     UDS_SendPositiveResponse(UDS_SID_WRITE_DID, payload, 3);
 
     /* 等待 CANoe Step 6 发送 0x11 ECU Reset 触发完整复位，
-       然后 Bootloader 重启后走正常 "No upgrade flag → 跳转 App" 流程 */
-    UART_SendString("Waiting for ECU Reset (Step 6)...\r\n");
+       然后 Bootloader 重启后跳转到新激活槽的 App */
+    UART_SendString("Update committed, waiting for ECU Reset (Step 6)...\r\n");
 
     /* 不直接跳转！防止 UDS 上下文跳转时状态未清理干净导致卡死 */
 }
@@ -507,28 +525,20 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
         return;
     }
 
-    /* 解析下载地址（4字节，大端）和大小（2字节，大端） */
-    uint32_t addr = ((uint32_t)frame->data[2] << 24) |
-                    ((uint32_t)frame->data[3] << 16) |
-                    ((uint32_t)frame->data[4] << 8)  |
-                    ((uint32_t)frame->data[5]);
+    /* 解析大小（2字节，大端）；地址忽略上位机值，强制使用非激活槽 */
     uint16_t size = ((uint16_t)frame->data[6] << 8) | frame->data[7];
 
-    /* 地址安全检查：不能写 Bootloader 区域 */
-    if (addr < APP_FLASH_BASE) {
-        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_REQUEST_OUT_OF_RANGE);
-        return;
-    }
-    if ((addr + size) > APP_FLASH_END) {
-        UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_REQUEST_OUT_OF_RANGE);
-        return;
-    }
-    if (size == 0U) {
+    /* 目标地址 = Slot A（简化策略：App 固定放在 A 区，链接地址 0x10000，
+       保证下载的固件与链接地址匹配，提交后可直接跳转） */
+    uint32_t addr = SLOT_A_BASE;
+
+    /* 大小校验：不能为 0，且不能超过单槽大小（224KB） */
+    if ((size == 0U) || ((uint32_t)size > SLOT_SIZE)) {
         UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_REQUEST_OUT_OF_RANGE);
         return;
     }
 
-    /* 擦除目标区域 */
+    /* 擦除目标槽 */
     uint8_t result = FlashApp_Erase(addr, (uint32_t)size);
     if (result != 0U) {
         UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
@@ -730,7 +740,7 @@ void UDS_Tick(void)
             /* 超时了，如果不在升级中就跳 App */
             if (!bootloaderActive) {
                 UART_SendString("S3 timeout, checking App...\r\n");
-                Jump_To_App();
+                Jump_To_App(Partition_GetActiveBase());
             } else {
                 /* 升级中，延长超时 */
                 UART_SendString("S3 timeout, download in progress, wait...\r\n");
@@ -755,20 +765,20 @@ void UDS_Tick(void)
  *           - 0x2E CRC 通过后跳（UDS_HandleWriteDID，CAN/UART 已初始化）
  *           - S3Server 5 秒超时跳（UDS_Tick，CAN/UART 已初始化）
  */
-void Jump_To_App(void)
+void Jump_To_App(uint32_t slotBase)
 {
     /* 1. 读取 App 的栈顶地址和复位向量 */
-    uint32_t appMsp = *(volatile uint32_t *)APP_FLASH_BASE;
-    uint32_t appPc  = *(volatile uint32_t *)(APP_FLASH_BASE + 4U);
+    uint32_t appMsp = *(volatile uint32_t *)slotBase;
+    uint32_t appPc  = *(volatile uint32_t *)(slotBase + 4U);
 
     /* 2. 合法性检查：
      *    - MSP 必须在 SRAM 范围内 (S32K144: 0x20000000 ~ 0x2000F000)
-     *    - PC  必须在 App Flash 范围内 (0x00010000 ~ 0x0007FFFF)
+     *    - PC  必须在当前槽范围内 (slotBase ~ slotBase+SLOT_SIZE)
      *    任一不通过就认为是非法 App（比如残留测试数据）
      */
     if ((appMsp == 0xFFFFFFFFU) || (appMsp == 0x00000000U) ||
         (appMsp < 0x20000000U) || (appMsp > 0x20010000U) ||
-        (appPc  < APP_FLASH_BASE) || (appPc >= APP_FLASH_END)) {
+        (appPc  < slotBase) || (appPc >= (slotBase + SLOT_SIZE))) {
         UART_SendString("No valid App, stay in Bootloader\r\n");
         /* 没有 App，重新开始倒计时 */
         s3ServerTimer = S3_SERVER_TIMEOUT_MS;
@@ -791,8 +801,8 @@ void Jump_To_App(void)
     /* 5. 关闭全局中断，防止跳转后旧中断触发 */
     INT_SYS_DisableIRQGlobal();
 
-    /* 6. 重定向向量表到 App 地址 */
-    S32_SCB->VTOR = APP_FLASH_BASE;
+    /* 6. 重定向向量表到 App 槽地址 */
+    S32_SCB->VTOR = slotBase;
 
     /* 7. 设置主栈指针为 App 栈顶 */
     __set_MSP(appMsp);

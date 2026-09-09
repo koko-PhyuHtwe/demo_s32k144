@@ -11,11 +11,12 @@
 #include "sdk_project_config.h"
 
 /* ==================== App 版本 ==================== */
-#define APP_VERSION  "V1.0"
+#define APP_VERSION      "V1.0"
+#define APP_VERSION_NUM  1U          /* 数字版本号（写入描述表，Bootloader 提交时自动 +1） */
 
 /* ==================== 升级标志 ==================== */
-#define UPGRADE_FLAG_ADDR     0x0003FFF0U  /* 升级标志存放地址 */
 #define UPGRADE_FLAG_MAGIC    0x5AA55AA5U  /* 升级请求标志值 */
+/* 注：升级标志地址 UPGRADE_FLAG_ADDR 定义在 flash_app.h（Boot 保护区常量区） */
 
 /* ==================== 函数声明 ==================== */
 int app_main(void);

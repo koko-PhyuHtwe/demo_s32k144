@@ -7,7 +7,9 @@
 **         Linker file for the GNU C Compiler (Bootloader)
 **
 **     Bootloader 起始地址：0x00000000
-**     Bootloader 区域：0x00000000 ~ 0x0000FFFF (64KB)
+**     Bootloader 代码区：0x00000000 ~ 0x0000DFFF (56KB)
+**     升级标志区：      0x0000E000 ~ 0x0000EFFF (4KB)
+**     元数据区(描述表)：0x0000F000 ~ 0x0000FFFF (4KB)
 ** ###################################################################
 */
 
@@ -23,10 +25,10 @@ M_VECTOR_RAM_SIZE = DEFINED(__flash_vector_table__) ? 0x0 : 0x0400;
 /* Specify the memory areas */
 MEMORY
 {
-  /* Flash - Bootloader 区域 64KB */
+  /* Flash - Bootloader 代码区 56KB（升级标志区 0xE000 / 元数据区 0xF000 不在此映射） */
   m_interrupts          (RX)  : ORIGIN = 0x00000000, LENGTH = 0x00000400
   m_flash_config        (RX)  : ORIGIN = 0x00000400, LENGTH = 0x00000010
-  m_text                (RX)  : ORIGIN = 0x00000410, LENGTH = 0x0000FBF0  /* 到 0x0000FFFF */
+  m_text                (RX)  : ORIGIN = 0x00000410, LENGTH = 0x0000DBF0  /* 到 0x0000DFFF */
 
   /* SRAM_L 32KB */
   m_data                (RW)  : ORIGIN = 0x1FFF8000, LENGTH = 0x00008000

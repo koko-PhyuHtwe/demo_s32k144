@@ -1,7 +1,20 @@
 """
-S32K144 Bootloader UDS 下载工具
+S32K144 Bootloader UDS 下载工具（A/B 双区架构）
 读取 app.bin，生成完整的 UDS CAN 报文序列
-CAN ID: 0x7E0 (请求), 0x123 (响应)
+CAN ID: 0x7E0 (请求), 0x7E8 (响应)   ← ISO 14229-2 物理寻址约定
+
+A/B 双区说明：
+  - Bootloader 会忽略 0x34 请求里的地址，自动写入"非激活槽"（空闲槽）
+  - 新版固件永远写到空闲槽，CRC 校验通过后才原子切换激活槽
+  - 因此升级中途断电不会破坏正在运行的固件（可回滚）
+
+0x27 安全访问说明：
+  - 固件 0x34 要求先通过 0x27 seed-key 解锁，否则返回 NRC=0x33
+  - 种子由 ECU 动态下发（基于毫秒 tick），无法在生成阶段预先计算密钥
+  - 因此本脚本生成的 0x27 0x02 帧为占位帧，仅展示报文结构；
+    密钥必须按 key = (seed + 0x1111) & 0xFFFF 现场计算后替换
+  - 需要全自动刷写请使用 CANoe CAPL 脚本 uds_download.can
+    （其 on message 0x7E8 回调里已实现动态 seed-key 交换）
 """
 
 import struct
@@ -11,10 +24,16 @@ import os
 
 # ==================== 配置 ====================
 BIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.bin")
-CAN_REQUEST_ID = 0x7E0
-CAN_RESPONSE_ID = 0x123
+CAN_REQUEST_ID = 0x7E0    # UDS 请求 ID（ISO 14229-2）
+CAN_RESPONSE_ID = 0x7E8   # UDS 响应 ID（ISO 14229-2），本脚本仅用于打印提示
+# 下载目标地址：A/B 双区下 Bootloader 忽略此值，自动写入空闲槽，仅作占位
 APP_START_ADDR = 0x00010000
 BLOCK_SIZE = 4  # 每块数据字节数（与固件实现一致）
+
+# 0x27 安全访问密钥算法（与固件 uds.c 一致）
+SECURITY_KEY_OFFSET = 0x1111
+# 占位种子：真实种子由 ECU 动态下发，生成阶段只能用占位值
+SECURITY_SEED_PLACEHOLDER = 0x1234
 
 # ==================== CRC32 ====================
 def calc_crc32(data):
@@ -85,6 +104,11 @@ def main():
     bin_size = len(bin_data)
     crc32 = calc_crc32(bin_data)
 
+    # 0x34 的 size 字段只有 2 字节（最大 65535），CANoe 侧也只读 64KB，超限直接报错
+    if bin_size > 0xFFFF:
+        print(f"ERROR: app.bin too large: {bin_size} bytes (max 65535)!")
+        sys.exit(1)
+
     print(f"File: {BIN_FILE}")
     print(f"Size: {bin_size} bytes (0x{bin_size:X})")
     print(f"CRC32: 0x{crc32:08X}")
@@ -103,10 +127,20 @@ def main():
     # 1. 启动扩展会话
     frames.append(("StartSession", make_uds_frame(0x10, sub_func=0x03)))
 
-    # 2. 请求下载
+    # 2. 0x27 安全访问：请求种子（帧结构固定，种子由 ECU 动态下发）
+    frames.append(("SecurityAccess_ReqSeed", make_uds_frame(0x27, sub_func=0x01)))
+
+    # 3. 0x27 安全访问：发送密钥（占位帧！须用 ECU 实际返回的种子重算）
+    placeholder_key = (SECURITY_SEED_PLACEHOLDER + SECURITY_KEY_OFFSET) & 0xFFFF
+    frames.append(("SecurityAccess_SendKey[PLACEHOLDER]",
+                   make_uds_frame(0x27, sub_func=0x02,
+                                  data_bytes=[(placeholder_key >> 8) & 0xFF,
+                                              placeholder_key & 0xFF])))
+
+    # 4. 请求下载
     frames.append(("RequestDownload", make_request_download(APP_START_ADDR, bin_size)))
 
-    # 3. 传输数据
+    # 5. 传输数据
     for i in range(num_blocks):
         offset = i * BLOCK_SIZE
         if i == num_blocks - 1:
@@ -125,13 +159,13 @@ def main():
             block_num = (i + 1) & 0xFF
             frames.append((f"TransferData[{block_num}]", make_transfer_data(block_num, block_data)))
 
-    # 4. 退出传输
+    # 6. 退出传输
     frames.append(("RequestTransferExit", make_uds_frame(0x37)))
 
-    # 5. CRC32 校验
+    # 7. CRC32 校验
     frames.append(("WriteDID_CRC32", make_write_did_crc(crc32)))
 
-    # 6. ECU 复位
+    # 8. ECU 复位
     frames.append(("ECUReset", make_uds_frame(0x11, sub_func=0x01)))
 
     # ==================== 打印所有报文 ====================
@@ -146,6 +180,12 @@ def main():
     print("=" * 70)
     print(f"\nTotal frames: {len(frames)}")
     print(f"CRC32 (for 0x2E WriteDID): 0x{crc32:08X}")
+
+    print("\n" + "!" * 70)
+    print("! WARNING: SecurityAccess_SendKey 为占位帧（seed 由 ECU 动态下发）。")
+    print(f"! 实际使用时请用 ECU 返回的 seed 计算 key = (seed + 0x{SECURITY_KEY_OFFSET:X}) & 0xFFFF 替换。")
+    print("! 全自动刷写请用 CANoe 脚本 uds_download.can（已实现动态 seed-key 交换）。")
+    print("!" * 70)
 
     # ==================== 导出为 CSV 格式（方便 CANoe 导入） ====================
     csv_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uds_frames.csv")

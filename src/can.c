@@ -84,19 +84,23 @@ void CAN_Deinit(void)
 }
 
 /**
- * @brief  通过轮询模式发送 CAN 消息
+ * @brief  通过非阻塞模式发送 CAN 消息
  * @param  id    CAN 消息 ID
  * @param  data  数据指针（最多 8 字节）
  * @param  len   数据长度（1-8）
+ * @note   非阻塞发送：函数立即返回，帧由 FlexCAN 硬件发出。
+ *         本工程是严格握手式（收到请求才回响应），TX 邮箱必然空闲，不会返回 BUSY。
+ *         即使偶发失败（响应丢失），CANoe 侧的超时重发 + 0x73 重同步也能恢复。
+ *         相比阻塞发送，避免主循环被 TX 完成信号卡住（曾出现 ~1s 无响应）。
  */
 void CAN_SendMessage(uint32_t id, const uint8_t *data, uint8_t len)
 {
     /* 更新数据长度 */
     canTxInfo.data_length = len;
 
-    /* 阻塞式发送，超时 1000ms */
-    FLEXCAN_DRV_SendBlocking(CAN_INSTANCE, CAN_TX_MB_IDX, &canTxInfo,
-                             id, data, CAN_TX_TIMEOUT_MS);
+    /* 非阻塞发送，立即返回 */
+    (void)FLEXCAN_DRV_Send(CAN_INSTANCE, CAN_TX_MB_IDX, &canTxInfo,
+                           id, data);
 }
 
 /**

@@ -29,6 +29,7 @@ int main(void)
 #include "can.h"
 #include "uds.h"
 #include "flash_app.h"
+#include "partition.h"
 #include "app.h"  /* 共享升级标志定义 */
 
 /**
@@ -52,30 +53,35 @@ int main(void)
     UART_Init();
     UART_SendBootMessage();
 
+    /* 5. 初始化分区模块：从元数据区读取描述表，确定激活槽 */
+    Partition_Init();
+
+    /* 6. 初始化 Flash 驱动（清除升级标志 / 提交描述表需要） */
+    FlashApp_Init();
+
     /* ===== 检查升级标志 ===== */
     uint32_t upgradeFlag = *(volatile uint32_t *)UPGRADE_FLAG_ADDR;
     if (upgradeFlag == UPGRADE_FLAG_MAGIC) {
         /* 有升级请求，留在 Bootloader */
         UART_SendString("Upgrade flag detected, stay in Bootloader\r\n");
+        UART_SendString("Active slot: ");
+        UART_SendString((Partition_GetActiveSlot() == SLOT_B) ? "B\r\n" : "A\r\n");
 
-        /* 清除升级标志（擦除该 4KB 扇区） */
-        FlashApp_Erase(UPGRADE_FLAG_ADDR, 0x1000U);
+        /* 清除升级标志（擦除升级标志扇区） */
+        FlashApp_EraseBootSector(UPGRADE_FLAG_ADDR);
     } else {
-        /* 没有升级请求，尝试跳 App */
+        /* 没有升级请求，尝试跳激活槽的 App */
         UART_SendString("No upgrade flag, try jumping to App...\r\n");
-        Jump_To_App();
+        Jump_To_App(Partition_GetActiveBase());
         /* 如果返回，说明没有合法 App，继续往下走 */
     }
 
     /* ===== 外设初始化（仅 Bootloader 模式需要） ===== */
 
-    /* 5. 初始化 CAN（配置发送邮箱 M0 + 接收邮箱 M1，开启中断） */
+    /* 7. 初始化 CAN（配置发送邮箱 M0 + 接收邮箱 M1，开启中断） */
     CAN_Init();
 
-    /* 6. 初始化 Flash 驱动 */
-    FlashApp_Init();
-
-    /* 7. 初始化 UDS 诊断服务 */
+    /* 8. 初始化 UDS 诊断服务 */
     UDS_Init();
 
     /* ===== 主循环 ===== */

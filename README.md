@@ -85,27 +85,29 @@
 ```
 0x00000000 ┌────────────────────────────┐
            │                            │
-           │   Bootloader 区域          │  64 KB
+           │   Boot 代码区              │  56 KB
            │   (Debug_FLASH 构建)       │
            │                            │
-0x0000FFF0 ├────────────────────────────┤  ← 升级标志位 UPGRADE_FLAG_ADDR
+0x0000E000 ├────────────────────────────┤  ← 升级标志区 UPGRADE_FLAG_ADDR
+           │                            │
+0x0000F000 ├────────────────────────────┤  ← 描述表/元数据区 PARTITION_TABLE_ADDR
            │                            │
 0x00010000 ├────────────────────────────┤  ← App 起始地址 APP_FLASH_BASE
            │                            │
-           │   App 区域                  │  约 448 KB
+           │   App 区域（Slot A + B）   │  448 KB
            │   (Debug_APP 构建)         │
            │                            │
 0x00080000 └────────────────────────────┘
 ```
 
-**升级标志位定义（[app.h](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/app.h)）：**
+**升级标志位定义（地址在 [flash_app.h](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/flash_app.h)，magic 在 [app.h](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/app.h)）：**
 ```c
-#define UPGRADE_FLAG_ADDR     0x0003FFF0U
-#define UPGRADE_FLAG_MAGIC    0x5AA55AA5U
+#define UPGRADE_FLAG_ADDR     0x0000E000U  /* flash_app.h */
+#define UPGRADE_FLAG_MAGIC    0x5AA55AA5U  /* app.h */
 ```
 
-- App 想升级时 → 把 `0x5AA55AA5` 写入 `0x0003FFF0` → 系统复位 → Bootloader 检测到 magic number → 停在 Bootloader 等 UDS
-- UDS CRC 校验通过 → Bootloader 擦除 `0x0003FFF0` 所在扇区 → CANoe 发 0x11 ECU Reset → 正常跳 App
+- App 想升级时 → 通过 `FlashApp_WriteBootSector` 把 `0x5AA55AA5` 写入 `0x0000E000`（Boot 保护区）→ 系统复位 → Bootloader 检测到 magic number → 停在 Bootloader 等 UDS
+- UDS CRC 校验通过 → Bootloader 擦除 `0x0000E000` 所在扇区 → CANoe 发 0x11 ECU Reset → 正常跳 App
 
 ---
 
@@ -198,8 +200,8 @@ demo_s32k144/
                │
                ▼
 ┌──────────────────────────────────┐
-│  检查 0x0003FFF0 处的标志？        │
-│  upgradeFlag = *(0x0003FFF0)      │
+│  检查 0x0000E000 处的标志？        │
+│  upgradeFlag = *(0x0000E000)      │
 └──────┬─────────────────┬──────────┘
        │ == MAGIC         │ != MAGIC
        ▼                  ▼
@@ -312,7 +314,7 @@ Final : 0x11 01                  → ECU 复位 (正响应 0x51 01)
 
 | 命令 | 说明 |
 |------|------|
-| **U** 或 **u** | 触发升级：写升级标志 `0x5AA55AA5` 到 `0x0003FFF0` → 系统复位 → 进入 Bootloader |
+| **U** 或 **u** | 触发升级：写升级标志 `0x5AA55AA5` 到 `0x0000E000` → 系统复位 → 进入 Bootloader |
 
 ---
 
@@ -333,7 +335,7 @@ Final : 0x11 01                  → ECU 复位 (正响应 0x51 01)
 | 方向 | CAN ID | 说明 |
 |------|--------|------|
 | 上位机 → 板卡 | **0x7E0** | UDS 请求（CAPL 发送） |
-| 板卡 → 上位机 | **0x123** | UDS 响应（Bootloader 回复） |
+| 板卡 → 上位机 | **0x7E8** | UDS 响应（Bootloader 回复） |
 
 ---
 
@@ -384,7 +386,7 @@ Final : 0x11 01                  → ECU 复位 (正响应 0x51 01)
 
 | 邮箱 | 方向 | ID | 说明 |
 |------|------|----|------|
-| M0 | 发送 | 0x123 | UDS 正/负响应 |
+| M0 | 发送 | 0x7E8 | UDS 正/负响应 |
 | M1 | 接收 | 0x7E0 | UDS 请求（ID 过滤） |
 
 **波特率计算：**

@@ -87,6 +87,74 @@ uint8_t FlashApp_Write(uint32_t addr, const uint8_t *data, uint32_t size)
 }
 
 /**
+ * @brief  擦除 Boot 保护数据区内一个 4KB 扇区
+ * @param  addr  扇区起始地址（须 4KB 对齐，落在 0xE000 ~ 0xFFFF）
+ * @return 0=成功, 1=失败
+ * @note   用于擦除升级标志扇区 / 描述表扇区，不受 App 区限制。
+ */
+uint8_t FlashApp_EraseBootSector(uint32_t addr)
+{
+    /* 1. 地址必须落在 Boot 保护数据区 [0xE000, 0x10000) 且 4KB 对齐 */
+    if ((addr < BOOT_DATA_BASE) || (addr >= BOOT_FLASH_END)) {
+        return 1U;
+    }
+    if ((addr % FLASH_SECTOR_SIZE) != 0U) {
+        return 1U;
+    }
+
+    /* 2. 关中断 */
+    INT_SYS_DisableIRQGlobal();
+
+    /* 3. 擦除该扇区 */
+    status_t status = FLASH_DRV_EraseSector(&flashSSDConfig, addr, FLASH_SECTOR_SIZE);
+
+    /* 4. 开中断 */
+    INT_SYS_EnableIRQGlobal();
+
+    return (status == STATUS_SUCCESS) ? 0U : 1U;
+}
+
+/**
+ * @brief  擦除并写入 Boot 保护数据区一个 4KB 扇区
+ * @param  addr  扇区起始地址（须 4KB 对齐，落在 0xE000 ~ 0xFFFF）
+ * @param  data  要写入的数据
+ * @param  size  数据大小（必须 8 字节对齐）
+ * @return 0=成功, 1=失败
+ * @note   先擦除 addr 所在 4KB 扇区，再写入。供升级标志 / 描述表落盘使用。
+ */
+uint8_t FlashApp_WriteBootSector(uint32_t addr, const uint8_t *data, uint32_t size)
+{
+    /* 1. 地址必须落在 Boot 保护数据区 [0xE000, 0x10000) 且 4KB 对齐 */
+    if ((addr < BOOT_DATA_BASE) || (addr >= BOOT_FLASH_END)) {
+        return 1U;
+    }
+    if ((addr % FLASH_SECTOR_SIZE) != 0U) {
+        return 1U;
+    }
+
+    /* 2. 对齐检查：大小必须 8 字节对齐 */
+    if ((size == 0U) || (size % FLASH_WRITE_ALIGN != 0U)) {
+        return 1U;
+    }
+
+    /* 3. 关中断 */
+    INT_SYS_DisableIRQGlobal();
+
+    /* 4. 擦除该扇区 */
+    status_t status = FLASH_DRV_EraseSector(&flashSSDConfig, addr, FLASH_SECTOR_SIZE);
+
+    /* 5. 擦除成功才写 */
+    if (status == STATUS_SUCCESS) {
+        status = FLASH_DRV_Program(&flashSSDConfig, addr, size, data);
+    }
+
+    /* 6. 开中断 */
+    INT_SYS_EnableIRQGlobal();
+
+    return (status == STATUS_SUCCESS) ? 0U : 1U;
+}
+
+/**
  * @brief  校验 Flash 数据
  * @param  addr     Flash 地址
  * @param  expected 期望的数据

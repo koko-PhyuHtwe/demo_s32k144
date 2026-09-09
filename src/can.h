@@ -14,13 +14,12 @@
 #define CAN_INSTANCE        INST_FLEXCAN_CONFIG_1  /* FlexCAN2 */
 #define CAN_TX_MB_IDX       0U                     /* 发送邮箱 (M0) */
 #define CAN_RX_MB_IDX       1U                     /* 接收邮箱 (M1) */
-#define CAN_TX_TIMEOUT_MS   1000U                  /* 发送超时 (ms) */
 
 /* CAN 发送 ID 和数据 */
-#define CAN_TX_ID           0x123U                 /* 回复 ID */
+#define CAN_TX_ID           0x7E8U                 /* UDS 响应 ID（ISO 14229-2 规范） */
 
 /* CAN 接收 ID 过滤 */
-#define CAN_RX_ID           0x7E0U                 /* CAN 卡发送的 ID */
+#define CAN_RX_ID           0x7E0U                 /* UDS 请求 ID（ISO 14229-2 规范） */
 
 /* 环形队列深度（能缓存多少帧 CAN 数据） */
 #define CAN_RX_QUEUE_SIZE   16U

@@ -7,6 +7,8 @@
 Debug_FLASH/
 Debug_APP/
 Debug_RAM/
+_build_app/
+_build_boot/
 
 # ---- 编译生成的中间文件 ----
 *.o
@@ -48,5 +50,6 @@ Thumbs.db
 *.orig
 
 # ---- 以下文件虽然是编译产物，但需要提交 ----
-# （app.bin 是 CANoe 刷写时要用的固件文件）
-!app.bin
+# （app_a.bin / app_b.bin 是 CANoe 刷写时按槽位选择的固件镜像）
+!app_a.bin
+!app_b.bin

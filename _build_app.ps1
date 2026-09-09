@@ -1,4 +1,4 @@
-# 命令行构建 App（Debug_APP 配置等价参数），输出 app.bin
+# Build App images (equivalent to Debug_APP config), outputs app_a.bin / app_b.bin
 $ErrorActionPreference = "Stop"
 
 $PROJ  = "C:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144"
@@ -99,25 +99,31 @@ Write-Host "AS  startup_S32K144.S"
 if ($LASTEXITCODE -ne 0) { Write-Error "assemble failed"; exit 1 }
 $objs += $objStartup
 
-# 链接
-$elf = "$OUT/demo_s32k144_app.elf"
-$linkArgs = @(
-  "-T", "$PROJ/Project_Settings/Linker_Files/S32K144_64_app.ld",
-  "-Wl,-Map,$OUT/demo_s32k144_app.map",
-  "-Xlinker", "--gc-sections",
-  "-n",
-  "-mcpu=cortex-m4", "-mfloat-abi=hard", "-mfpu=fpv4-sp-d16",
-  "-specs=nano.specs", "-specs=nosys.specs",
-  "--sysroot=$SYSR"
-) + $objs
-Write-Host "LD  demo_s32k144_app.elf"
-& $gcc @linkArgs "-o" $elf
-if ($LASTEXITCODE -ne 0) { Write-Error "link failed"; exit 1 }
+# Dual-image link: same source, different link base (A/B dual-slot)
+$variants = @(
+  @{ name = "app_a"; ld = "S32K144_64_app_a.ld"; bin = "app_a.bin" },
+  @{ name = "app_b"; ld = "S32K144_64_app_b.ld"; bin = "app_b.bin" }
+)
 
-# 生成 bin
-$bin = "$PROJ/app.bin"
-Write-Host "OBJCOPY -> app.bin"
-& $objcopy -O binary $elf $bin
-if ($LASTEXITCODE -ne 0) { Write-Error "objcopy failed"; exit 1 }
+foreach ($v in $variants) {
+  $elf = "$OUT/demo_s32k144_$($v.name).elf"
+  $linkArgs = @(
+    "-T", "$PROJ/Project_Settings/Linker_Files/$($v.ld)",
+    "-Wl,-Map,$OUT/demo_s32k144_$($v.name).map",
+    "-Xlinker", "--gc-sections",
+    "-n",
+    "-mcpu=cortex-m4", "-mfloat-abi=hard", "-mfpu=fpv4-sp-d16",
+    "-specs=nano.specs", "-specs=nosys.specs",
+    "--sysroot=$SYSR"
+  ) + $objs
+  Write-Host "LD  $($v.name) -> $($v.bin)"
+  & $gcc @linkArgs "-o" $elf
+  if ($LASTEXITCODE -ne 0) { Write-Error "link failed: $($v.name)"; exit 1 }
 
-Write-Host "OK: $bin"
+  $bin = "$PROJ/$($v.bin)"
+  Write-Host "OBJCOPY -> $($v.bin)"
+  & $objcopy -O binary $elf $bin
+  if ($LASTEXITCODE -ne 0) { Write-Error "objcopy failed: $($v.name)"; exit 1 }
+}
+
+Write-Host "OK: app_a.bin / app_b.bin generated"

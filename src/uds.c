@@ -528,9 +528,9 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
     /* 解析大小（2字节，大端）；地址忽略上位机值，强制使用非激活槽 */
     uint16_t size = ((uint16_t)frame->data[6] << 8) | frame->data[7];
 
-    /* 目标地址 = Slot A（简化策略：App 固定放在 A 区，链接地址 0x10000，
-       保证下载的固件与链接地址匹配，提交后可直接跳转） */
-    uint32_t addr = SLOT_A_BASE;
+    /* 目标地址 = 非激活槽（空闲槽）基地址：
+       新固件永远写到空闲槽，掉电/失败不破坏正在运行的固件（A/B 双区核心思想） */
+    uint32_t addr = Partition_GetInactiveBase();
 
     /* 大小校验：不能为 0，且不能超过单槽大小（224KB） */
     if ((size == 0U) || ((uint32_t)size > SLOT_SIZE)) {

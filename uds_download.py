@@ -1,12 +1,15 @@
 """
 S32K144 Bootloader UDS 下载工具（A/B 双区架构）
-读取 app.bin，生成完整的 UDS CAN 报文序列
+读取 app_a.bin 作为示例，生成完整的 UDS CAN 报文序列
 CAN ID: 0x7E0 (请求), 0x7E8 (响应)   ← ISO 14229-2 物理寻址约定
 
 A/B 双区说明：
   - Bootloader 会忽略 0x34 请求里的地址，自动写入"非激活槽"（空闲槽）
   - 新版固件永远写到空闲槽，CRC 校验通过后才原子切换激活槽
   - 因此升级中途断电不会破坏正在运行的固件（可回滚）
+  - 镜像按链接地址区分：app_a.bin(0x10000) / app_b.bin(0x48000)，
+    由 CANoe 脚本通过 0x22 F19A 读激活槽后自动选镜像。
+    本脚本是静态参考工具（无法实时查询槽位），默认演示 app_a.bin。
 
 0x27 安全访问说明：
   - 固件 0x34 要求先通过 0x27 seed-key 解锁，否则返回 NRC=0x33
@@ -23,7 +26,8 @@ import sys
 import os
 
 # ==================== 配置 ====================
-BIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app.bin")
+# 示例镜像：A/B 双区下由 CANoe 实时选镜像，本工具默认演示 Slot A 镜像
+BIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_a.bin")
 CAN_REQUEST_ID = 0x7E0    # UDS 请求 ID（ISO 14229-2）
 CAN_RESPONSE_ID = 0x7E8   # UDS 响应 ID（ISO 14229-2），本脚本仅用于打印提示
 # 下载目标地址：A/B 双区下 Bootloader 忽略此值，自动写入空闲槽，仅作占位
@@ -106,7 +110,7 @@ def main():
 
     # 0x34 的 size 字段只有 2 字节（最大 65535），CANoe 侧也只读 64KB，超限直接报错
     if bin_size > 0xFFFF:
-        print(f"ERROR: app.bin too large: {bin_size} bytes (max 65535)!")
+        print(f"ERROR: {os.path.basename(BIN_FILE)} too large: {bin_size} bytes (max 65535)!")
         sys.exit(1)
 
     print(f"File: {BIN_FILE}")

@@ -16,25 +16,27 @@ variables
   byte gNrc;
 
   /* 0x27 安全访问相关 */
-  word gSeed;     /* Bootloader 下发的种�?*/
+  word gSeed;     /* Bootloader 下发的种子 */
   word gKey;      /* 计算出的密钥 */
+
+  /* 0x22 F19A 激活槽查询相关 */
+  byte gActiveSlot;  /* 0=A, 1=B */
 }
 
 on start
 {
   InitCRC32Table();
-  ReadAppBin();
 
-  gTotalBlocks = gAppSize / 4;
-  if (gAppSize % 4 != 0) gTotalBlocks++;
+  gTotalBlocks = 0;
+  gAppSize = 0;
+  gCrc32 = 0;
 
   write("========================================");
   write("  UDS Download Tool for S32K144");
   write("  CAPL v2: resync-0x73 / timeout=200ms / retry=5");
+  write("  A/B dual-slot: auto-select app_a/app_b");
   write("========================================");
-  write("App Size    : %d bytes", gAppSize);
-  write("Total Blocks: %d", gTotalBlocks);
-  write("CRC32       : 0x%08X", gCrc32);
+  write("(App image loads after reading active slot)");
   write("========================================");
 
   TxMsg.dlc = 8;
@@ -47,24 +49,26 @@ on start
   setTimer(gTimer, 100);
 }
 
-ReadAppBin()
+ReadAppBin(char binName[])
 {
   dword fileHandle;
   long bytesRead;
+  char fullPath[256];
 
   gAppSize = 0;
 
-  /* 先找 CANoe 工程目录下的 app.bin，找不到再回退到源码工程目�?*/
-  fileHandle = openFileRead("app.bin", 1);
+  /* 先找 CANoe 工程目录下的 bin，找不到再回退到源码工程目录 */
+  fileHandle = openFileRead(binName, 1);
   if (fileHandle == 0)
   {
-    fileHandle = openFileRead("C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\app.bin", 1);
+    snprintf(fullPath, 256, "C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\%s", binName);
+    fileHandle = openFileRead(fullPath, 1);
   }
 
   if (fileHandle == 0)
   {
-    write("ERROR: Cannot open app.bin!");
-    write("Copy app.bin next to the CANoe .cfg, or into demo_s32k144 project folder");
+    write("ERROR: Cannot open %s!", binName);
+    write("Copy it next to the CANoe .cfg, or into demo_s32k144 project folder");
     stop();
     return;
   }
@@ -73,14 +77,16 @@ ReadAppBin()
 
   if (bytesRead <= 0)
   {
-    write("ERROR: app.bin is empty!");
+    write("ERROR: %s is empty!", binName);
     stop();
     return;
   }
 
   gAppSize = bytesRead;
   gCrc32 = CalcCRC32(gAppData, gAppSize);
-  write("app.bin loaded: %d bytes", gAppSize);
+  gTotalBlocks = gAppSize / 4;
+  if (gAppSize % 4 != 0) gTotalBlocks++;
+  write("%s loaded: %d bytes, CRC32=0x%08X", binName, gAppSize, gCrc32);
 }
 
 on timer gTimer
@@ -88,21 +94,35 @@ on timer gTimer
   switch (gState)
   {
     case 0:
-      write("[Step 1/7] Start Extended Session...");
+      write("[Step 1/9] Start Extended Session...");
       SendFrame(0x02, 0x10, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00);
       gState = 100;
       setTimer(gTimer, 200);
       break;
 
+    case 150:
+      write("[Step 2/9] Read Active Slot (0x22 F19A)...");
+      SendFrame(0x03, 0x22, 0xF1, 0x9A, 0x00, 0x00, 0x00, 0x00);
+      gState = 250;
+      setTimer(gTimer, 200);
+      break;
+
+    case 250:
+      write("ERROR: 0x22 timeout, retry...");
+      gRetryCount++;
+      if (gRetryCount > 5) { stop(); break; }
+      gState = 150; setTimer(gTimer, 100);
+      break;
+
     case 1:
-      write("[Step 2/7] Security Access - Request Seed...");
+      write("[Step 3/9] Security Access - Request Seed...");
       SendFrame(0x02, 0x27, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00);
       gState = 200;
       setTimer(gTimer, 200);
       break;
 
     case 2:
-      write("[Step 3/7] Security Access - Send Key (0x%04X)...", gKey);
+      write("[Step 4/9] Security Access - Send Key (0x%04X)...", gKey);
       SendFrame(0x04, 0x27, 0x02,
                (byte)(gKey >> 8), (byte)(gKey & 0xFF),
                0x00, 0x00, 0x00);
@@ -111,7 +131,7 @@ on timer gTimer
       break;
 
     case 3:
-      write("[Step 4/7] Request Download (addr=0x00010000, size=%d)...", gAppSize);
+      write("[Step 5/9] Request Download (addr=0x00010000, size=%d)...", gAppSize);
       SendFrame(0x07, 0x34, 0x00, 0x01, 0x00, 0x00,
                (byte)(gAppSize >> 8), (byte)(gAppSize & 0xFF));
       gState = 400;
@@ -123,14 +143,14 @@ on timer gTimer
       break;
 
     case 5:
-      write("[Step 6/7] Request Transfer Exit...");
+      write("[Step 7/9] Request Transfer Exit...");
       SendFrame(0x01, 0x37, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00);
       gState = 600;
       setTimer(gTimer, 200);
       break;
 
     case 6:
-      write("[Step 7/7] Write DID 0xFF01 (CRC32=0x%08X)...", gCrc32);
+      write("[Step 8/9] Write DID 0xFF01 (CRC32=0x%08X)...", gCrc32);
       SendFrame(0x07, 0x2E, 0xFF, 0x01,
                (byte)(gCrc32 >> 24), (byte)(gCrc32 >> 16),
                (byte)(gCrc32 >> 8),  (byte)(gCrc32 & 0xFF));
@@ -246,6 +266,27 @@ on message 0x7E8
       if (gSid == 0x50)
       {
         write("  [OK] 0x50 Extended Session");
+        gState = 150; setTimer(gTimer, 100);
+      }
+      break;
+
+    case 250:
+      /* 0x22 F19A 正响应：62 F1 9A <slot>（0=A, 1=B） */
+      if (gSid == 0x62 && this.byte(2) == 0xF1 && this.byte(3) == 0x9A)
+      {
+        gActiveSlot = this.byte(4);
+        write("  [OK] 0x62 Active Slot = %d", gActiveSlot);
+        /* 目标槽 = 非激活槽，加载链接地址匹配该槽的镜像 */
+        if (gActiveSlot == 0)     /* 激活 A -> 写 B */
+        {
+          write("  -> target Slot B, use app_b.bin");
+          ReadAppBin("app_b.bin");
+        }
+        else                      /* 激活 B -> 写 A */
+        {
+          write("  -> target Slot A, use app_a.bin");
+          ReadAppBin("app_a.bin");
+        }
         gState = 1; setTimer(gTimer, 100);
       }
       break;
@@ -352,7 +393,7 @@ SendTransferData()
 
   if (gOffset >= gAppSize)
   {
-    write("[Step 5/7] Data Transfer Complete (%d blocks)", gTotalBlocks);
+    write("[Step 6/9] Data Transfer Complete (%d blocks)", gTotalBlocks);
     gState = 5; setTimer(gTimer, 100);
   }
   else

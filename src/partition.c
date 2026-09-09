@@ -79,25 +79,40 @@ uint32_t Partition_GetInactiveBase(void)
 }
 
 /**
- * @brief  提交升级：把新固件信息写入描述表并激活 Slot A
+ * @brief  提交升级：把新固件信息写入描述表并翻转激活槽
  * @param  crc32  新固件 CRC32
  * @param  size   新固件字节数
  * @return 0=成功, 1=失败
- * @note   简化策略：App 固定放在 Slot A，提交时直接写 A 槽并激活 A。
- *         操作顺序：更新 RAM 副本中 A 槽字段 → active_slot=A → 擦写元数据区落盘
+ * @note   A/B 双区流程：
+ *         1. 目标槽 = 非激活槽（新固件写空闲槽）
+ *         2. 新版本号 = 当前激活槽版本 + 1
+ *         3. 更新 RAM 副本中目标槽的 version/crc/size/state
+ *         4. 翻转 active_slot
+ *         5. 擦写元数据区落盘（原子提交）
  */
 uint8_t Partition_CommitUpdate(uint32_t crc32, uint32_t size)
 {
-    /* 简化策略：App 固定放在 Slot A（链接地址 0x10000），
-       提交时直接写 A 槽信息并激活 A，保证跳转地址与链接地址一致 */
+    /* 目标槽 = 非激活槽：升级永远写空闲槽，提交时原子切换 */
+    slot_id_t target = (Partition_GetActiveSlot() == SLOT_A) ? SLOT_B : SLOT_A;
+
+    /* 新版本号 = 当前激活槽版本 + 1 */
     uint32_t newVersion = Partition_GetActiveVersion() + 1U;
 
-    g_partition.slot_a_version = newVersion;
-    g_partition.slot_a_crc32   = crc32;
-    g_partition.slot_a_size    = size;
-    g_partition.slot_a_state   = SLOT_STATE_VALID;
+    /* 更新 RAM 副本中目标槽的字段 */
+    if (target == SLOT_A) {
+        g_partition.slot_a_version = newVersion;
+        g_partition.slot_a_crc32   = crc32;
+        g_partition.slot_a_size    = size;
+        g_partition.slot_a_state   = SLOT_STATE_VALID;
+    } else {
+        g_partition.slot_b_version = newVersion;
+        g_partition.slot_b_crc32   = crc32;
+        g_partition.slot_b_size    = size;
+        g_partition.slot_b_state   = SLOT_STATE_VALID;
+    }
 
-    g_partition.active_slot = (uint32_t)SLOT_A;
+    /* 翻转激活槽 */
+    g_partition.active_slot = (uint32_t)target;
 
     /* 原子落盘：擦写描述表扇区 */
     return FlashApp_WriteBootSector(PARTITION_TABLE_ADDR,

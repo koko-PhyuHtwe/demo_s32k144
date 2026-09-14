@@ -327,7 +327,7 @@ on message 0x7E8
         {
           write("  [Progress] %d / %d", gBlockNum, gTotalBlocks);
         }
-        gState = 4; setTimer(gTimer, 1);
+        gState = 4; setTimer(gTimer, 2);
       }
       else
       {

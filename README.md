@@ -153,7 +153,7 @@ Cortex-M 的程序地址在**编译链接时定死**（向量表、函数、常�
 ### 断电测试结果（已验证 ✅）
 
 在 A 区下载传输中途断电，重新上电后：
-1. Bootloader 检测升级标志 → 停在 Bootloader → 5 秒 S3 超时 → **跳 B 区旧固件，正常运行**（激活槽未被触碰）
+1. **升级标志在下载开始时已被擦除**（防止重启后重复进入 Boot），上电 Boot 读标志 = 无 → 直接读描述表 → 激活槽还是 B → **跳 B 区旧固件，正常启动**
 2. 再次发 'U' → Bootloader 读激活槽仍为 B → 继续选 A 区下载（分区表未被"半提交"，无脏状态）
 
 ---
@@ -163,7 +163,11 @@ Cortex-M 的程序地址在**编译链接时定死**（向量表、函数、常�
 | 构建配置 | 链接脚本 | 预处理宏 | 起始地址 | 用途 |
 |---------|---------|---------|---------|------|
 | **Debug_FLASH** | `S32K144_64_flash.ld` | 无 | 0x00000000 | Bootloader 固件 |
-| **Debug_APP** | `S32K144_64_app.ld` | `BUILD_APP` | 0x00010000 | App 固件（Slot A 镜像） |
+| **Debug_RAM** | `S32K144_64_ram.ld` | 无 | RAM | 调试用（不烧 Flash） |
+| **Debug_APP_A** | `S32K144_64_app_a.ld` | `BUILD_APP` | 0x00010000 | App（Slot A 镜像） |
+| **Debug_APP_B** | `S32K144_64_app_b.ld` | `BUILD_APP` | 0x00048000 | App（Slot B 镜像） |
+
+App 切 IDE 构建配置分别编译：选中 **Debug_APP_A** / **Debug_APP_B**，各按一次 `Ctrl+B`，自动生成 `Debug_APP_A/app_a.bin` 和 `Debug_APP_B/app_b.bin`（已配置 Create Flash Image 自动出 bin）。
 
 同一套源文件，[main.c](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/main.c) 中用 `#ifdef BUILD_APP` 切换：
 ```c
@@ -176,7 +180,7 @@ int main(void) { ... }
 #endif
 ```
 
-> A/B 双镜像（app_a/app_b）由命令行脚本 `_build_app.ps1` 一次编出（见"快速开始"）。
+> A/B 双镜像（app_a/app_b）由 IDE 双构建配置产出，编译完成即自动转为 bin，CANoe 脚本可直接从编译目录读取（见"快速开始"）。
 
 ---
 
@@ -196,20 +200,22 @@ demo_s32k144/
 ├── board/                             ← 板级配置（Config Tools 生成）
 ├── Project_Settings/Linker_Files/
 │   ├── S32K144_64_flash.ld            ← Bootloader 链接脚本
-│   ├── S32K144_64_app.ld              ← App 链接脚本（0x10000 全区）
 │   ├── S32K144_64_app_a.ld            ← Slot A 链接脚本（224KB）
 │   └── S32K144_64_app_b.ld            ← Slot B 链接脚本（224KB）
 ├── .project / .cproject               ← S32DS Eclipse 工程文件
 │
-├── uds_download.can                   ← CANoe CAPL 自动升级脚本（v2，含选槽）
-├── uds_download.cbf                   ← CAPL 编译产物（CANoe 自动生成）
-├── uds_frames.csv                     ← 参考报文清单（Python 工具生成）
-├── uds_download.py                    ← Python 离线 UDS 报文生成工具
-├── check_crc32.py                     ← CRC32 一致性校验工具
-├── app_a.bin                          ← Slot A 固件镜像（CANoe 刷写用）
-├── app_b.bin                          ← Slot B 固件镜像（CANoe 刷写用）
-├── _build_boot.ps1                    ← 命令行编译 Bootloader
-├── _build_app.ps1                     ← 命令行编译 app_a/app_b 双镜像
+├── canoe/
+│   └── uds_download.can               ← CANoe CAPL 自动升级脚本（v2，含选槽）
+├── tools/                             ← 上位机辅助工具
+│   ├── uds_download.py                ← Python 离线 UDS 报文生成工具
+│   ├── check_crc32.py                 ← CRC32 一致性校验工具
+│   └── uds_frames.csv                 ← 参考报文清单（Python 工具生成）
+├── docs/
+│   └── interview_uds_cheatsheet.md    ← 面试速记卡片
+│
+├── Debug_FLASH/                       ← Bootloader 编译输出（IDE 生成）
+├── Debug_APP_A/                       ← app_a.elf + app_a.bin（IDE 生成）
+├── Debug_APP_B/                       ← app_b.elf + app_b.bin（IDE 生成）
 │
 ├── .gitignore
 └── README.md
@@ -365,19 +371,19 @@ Final : 0x11 01                  → ECU 复位 (正响应 0x51 01)
 
 ## CANoe 自动刷写说明
 
-提供 [uds_download.can](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/uds_download.can)（CAPL v2 脚本），自动完成上述 9 步 UDS 流程。
+提供 [uds_download.can](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/canoe/uds_download.can)（CAPL v2 脚本），自动完成上述 9 步 UDS 流程。
 
 **CAPL v2 特性：**
 - 0x22 F19A 读激活槽 → **自动选择 app_a.bin / app_b.bin**
 - 数据块超时重发 + **NRC 0x73 自动重同步**（响应偶发丢失时自愈，不中断刷写）
 - 单块超时 200ms，重试 5 次
-- 镜像文件自动查找（CANoe 工程目录 → 工程源码目录两级回退）
+- 镜像文件自动查找（CANoe 工程目录 → 工程源码目录 → `Debug_APP_A/B` 编译目录，三级回退）
 
 ### 使用方法
 
-1. 确保 `app_a.bin` / `app_b.bin` 在 CANoe `.cfg` 同目录或工程目录下
+1. 在 S32DS 里编译 Debug_APP_A / Debug_APP_B，bin 自动产出到对应编译目录
 2. 打开 CANoe，配置 CAN 通道波特率 500kbps，ID 过滤关闭
-3. 载入 `uds_download.can` 脚本（修改后需重新 Build，F8）
+3. 载入 `canoe/uds_download.can` 脚本（修改后需重新 Build，F8）
 4. App 运行时串口发 'U' 进入 Bootloader（或上电无 App 时自动等待）
 5. 点击 CANoe 开始测量 → 自动完成刷写 → 复位 → 跳转新激活槽 App
 
@@ -486,33 +492,23 @@ Bit Rate = 8MHz / (0+1) / 16 = 500,000 bps
 
 ## 快速开始
 
-### 1. 命令行编译（推荐，一条命令出所有固件）
-
-```powershell
-cd c:\Users\10608\Documents\NXP_S32_3.4\demo_s32k144
-
-# 编译 Bootloader → _build_boot/demo_s32k144_boot.hex
-powershell -ExecutionPolicy Bypass -File .\_build_boot.ps1
-
-# 编译 App 双镜像 → app_a.bin + app_b.bin
-powershell -ExecutionPolicy Bypass -File .\_build_app.ps1
-```
-
-### 2. S32DS 图形界面编译
+### 1. S32DS 图形界面编译（纯 IDE，无脚本）
 
 1. 选中 **Debug_FLASH** 构建配置 → `Ctrl+B` 编译 Bootloader
-2. 切换 **Debug_APP** 构建配置 → `Ctrl+B` 编译 App（Slot A 镜像）
-3. A/B 双镜像建议用命令行脚本（步骤 1），S32DS 的 Debug_APP 配置仅出 Slot A 镜像
+2. 选中 **Debug_APP_A** → `Ctrl+B`，产物 `Debug_APP_A/app_a.elf` + `app_a.bin`（Create Flash Image 自动转换）
+3. 选中 **Debug_APP_B** → `Ctrl+B`，产物 `Debug_APP_B/app_b.elf` + `app_b.bin`
 
-### 3. 烧录 Bootloader
+切换构建配置：右键工程 → Build Configurations → Set Active → 选配置。
 
-用 J-Link 下载 `_build_boot/demo_s32k144_boot.hex` 或 Debug_FLASH 的 elf 到板子。
+### 2. 烧录 Bootloader
 
-### 4. 刷写 App（两种方式）
+用 J-Link 下载 `Debug_FLASH/demo_s32k144.hex` 或 elf 到板子。
+
+### 3. 刷写 App（两种方式）
 
 **方式 A：J-Link 直接烧**（开发调试最快）
-- Slot A：烧 `app_a.bin` 到 0x10000
-- Slot B：烧 `app_b.bin` 到 0x48000
+- Slot A：烧 `Debug_APP_A/app_a.bin` 到 0x10000
+- Slot B：烧 `Debug_APP_B/app_b.bin` 到 0x48000
 
 **方式 B：CANoe UDS 刷写（真实 A/B 升级流程）**
 - 上电 Bootloader → CANoe 开始测量 → 自动读槽选镜像 → 下载 → 复位
@@ -551,6 +547,7 @@ powershell -ExecutionPolicy Bypass -File .\_build_app.ps1
 3. **传输容错（v1.4）**：CANoe 收到 NRC 0x73（重复块）时自动重同步续发，单帧响应丢失可自愈。
 4. **原子提交（v2.0）**：分区表一次擦写完成"写新槽 + 翻转激活槽"，断电不产生半提交状态。
 5. **ECU Reset 优先**：走 0x11 完整复位再跳 App，避免 UDS 上下文直接跳转残留状态卡死。
+6. **看门狗（Demo 阶段未启用）**：S32 SDK 的 `SystemInit()` 默认 `DISABLE_WDOG=1`，通过 `0xD928C520` 解锁序列关闭 WDOG。Demo 阶段关闭是因为调试期不需要、且 Flash 操作期间喂狗会干扰时序。**量产方案**：改为不禁用，Boot 刷写超时喂狗、App 运行周期喂狗，超时复位回安全状态。
 
 ---
 
@@ -561,13 +558,13 @@ powershell -ExecutionPolicy Bypass -File .\_build_app.ps1
 - `board/` 配置
 - `Project_Settings/Linker_Files/` 链接脚本
 - `.project` / `.cproject`
-- `app_a.bin` / `app_b.bin` / `uds_download.can` / `uds_frames.csv`
-- `*.py` 工具脚本、`_build_boot.ps1` / `_build_app.ps1`
+- `canoe/uds_download.can`（CANoe 脚本）
+- `tools/`（Python 工具脚本）
+- `docs/`（文档）
 - `.gitignore` / `README.md`
 
 **🚫 忽略：**
-- `Debug_FLASH/` / `Debug_APP/` / `Debug_RAM/` 编译产物
-- `_build_app/` / `_build_boot/` 命令行构建产物
+- `Debug_*/` 编译产物（含自动生成的 bin）
 - `.settings/` IDE 偏好
 - `SDK/` NXP SDK 本地链接
 

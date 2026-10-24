@@ -4,21 +4,20 @@
 # ============================================
 
 # ---- 编译产物目录 ----
-Debug_FLASH/
-Debug_APP/
-Debug_RAM/
-_build_app/
-_build_boot/
+Debug_*/
 
 # ---- 编译生成的中间文件 ----
 *.o
 *.obj
 *.elf
+*.bin
+*.hex
 *.map
 *.siz
 *.d
 *.su
 *.lst
+*.cbf
 
 # ---- 自动生成的 IDE 配置 ----
 Debug_Configurations/
@@ -49,7 +48,3 @@ Thumbs.db
 *.bak
 *.orig
 
-# ---- 以下文件虽然是编译产物，但需要提交 ----
-# （app_a.bin / app_b.bin 是 CANoe 刷写时按槽位选择的固件镜像）
-!app_a.bin
-!app_b.bin

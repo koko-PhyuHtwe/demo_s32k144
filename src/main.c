@@ -70,9 +70,16 @@ int main(void)
         /* 清除升级标志（擦除升级标志扇区） */
         FlashApp_EraseBootSector(UPGRADE_FLAG_ADDR);
     } else {
-        /* 没有升级请求，尝试跳激活槽的 App */
-        UART_SendString("No upgrade flag, try jumping to App...\r\n");
-        Jump_To_App(Partition_GetActiveBase());
+        /* 没有升级请求：先校验激活槽固件 CRC（有元数据时），通过才跳。
+           verify=2 表示无元数据（如 J-Link 直烧），退化为向量表检查 */
+        uint8_t verify = Partition_VerifyActiveSlot();
+        if (verify == 1U) {
+            /* CRC 不匹配：固件损坏，留在 Bootloader 等待重新升级 */
+            UART_SendString("Active slot CRC mismatch, stay in Bootloader\r\n");
+        } else {
+            UART_SendString("No upgrade flag, try jumping to App...\r\n");
+            Jump_To_App(Partition_GetActiveBase());
+        }
         /* 如果返回，说明没有合法 App，继续往下走 */
     }
 

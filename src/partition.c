@@ -119,3 +119,44 @@ uint8_t Partition_CommitUpdate(uint32_t crc32, uint32_t size)
                                     (const uint8_t *)&g_partition,
                                     sizeof(g_partition));
 }
+
+/**
+ * @brief  启动前校验激活槽固件完整性
+ */
+uint8_t Partition_VerifyActiveSlot(void)
+{
+    slot_id_t active;
+    uint32_t  base, size, crc;
+    uint8_t   state;
+
+    if (!Partition_IsValid()) {
+        return 2U;  /* 表无效，无法校验 */
+    }
+
+    active = Partition_GetActiveSlot();
+    if (active == SLOT_A) {
+        base  = SLOT_A_BASE;
+        size  = g_partition.slot_a_size;
+        crc   = g_partition.slot_a_crc32;
+        state = g_partition.slot_a_state;
+    } else {
+        base  = SLOT_B_BASE;
+        size  = g_partition.slot_b_size;
+        crc   = g_partition.slot_b_crc32;
+        state = g_partition.slot_b_state;
+    }
+
+    /* 非 VALID 状态（EMPTY / 未登记）→ 没有可对 CRC 的元数据，
+       交回给 Jump_To_App 的向量表检查 */
+    if (state != SLOT_STATE_VALID) {
+        return 2U;
+    }
+
+    /* 大小非法视为固件损坏 */
+    if ((size == 0U) || (size > SLOT_SIZE)) {
+        return 1U;
+    }
+
+    /* 重算整槽 CRC32，与描述表存储值比对 */
+    return (FlashApp_CalcCRC32(base, size) == crc) ? 0U : 1U;
+}

@@ -91,6 +91,16 @@ uint32_t Partition_GetActiveVersion(void);
 uint32_t Partition_GetInactiveBase(void);
 
 /**
+ * @brief  启动前校验激活槽固件完整性（重算 CRC32 与描述表比对）
+ * @return 0 = 校验通过（VALID 且 CRC 一致）
+ *         1 = 校验失败（VALID 但 CRC 不匹配，固件损坏）
+ *         2 = 无法校验（槽非 VALID 或表无效，如 J-Link 直烧场景）
+ * @note   仅对已登记的 VALID 槽做 CRC 校验；返回 2 时由调用方
+ *         退化为 Jump_To_App 内部的向量表合法性检查
+ */
+uint8_t Partition_VerifyActiveSlot(void);
+
+/**
  * @brief  提交升级：把新固件信息写入描述表并翻转激活槽
  * @param  crc32  新固件 CRC32（下载区域整块）
  * @param  size   新固件字节数

@@ -86,6 +86,7 @@ static uint32_t downloadTotalSize         = 0U;   /* 总大小 */
 static uint8_t  blockCounter              = 1U;    /* 期望的块序号 */
 static uint8_t  dataBuffer[8];                    /* 数据缓存（攒8字节写一次） */
 static uint8_t  dataBufferIndex           = 0U;   /* 缓存当前字节数 */
+static uint8_t  updateCommitted           = 0U;   /* 本会话 0x2E 是否已成功提交（幂等保护） */
 
 /* ==================== 0x27 安全访问状态 ==================== */
 static uint8_t  securityUnlocked          = 0U;   /* 0=锁定, 1=已解锁 */
@@ -112,6 +113,9 @@ void UDS_Init(void)
     securitySeed           = 0U;
     securitySeedRequested  = 0U;
     securityAttemptCounter = 0U;
+
+    /* 提交标志复位：允许新一轮下载后执行 0x2E 提交 */
+    updateCommitted        = 0U;
 }
 
 /**
@@ -348,10 +352,14 @@ static void UDS_HandleSecurityAccess(const can_frame_t *frame)
             return;
         }
 
-        /* 生成种子：用系统 tick 作为伪随机源（项目简化实现） */
-        securitySeed = (uint16_t)(OSIF_GetMilliseconds() & 0xFFFFU);
-        if (securitySeed == 0U) {
-            securitySeed = 0x1234U;  /* 避免 0 种子 */
+        /* 生成种子：用系统 tick 作为伪随机源（项目简化实现）。
+           一轮只生成一次：重复请求种子返回同一个值——否则上位机
+           超时重试会触发重新生成，旧种子算的 key 就和 ECU 存的对不上（NRC 0x35） */
+        if (securitySeedRequested == 0U) {
+            securitySeed = (uint16_t)(OSIF_GetMilliseconds() & 0xFFFFU);
+            if (securitySeed == 0U) {
+                securitySeed = 0x1234U;  /* 避免 0 种子 */
+            }
         }
 
         /* 标记已下发种子，等待密钥 */
@@ -369,6 +377,14 @@ static void UDS_HandleSecurityAccess(const can_frame_t *frame)
     }
 
     /* 子功能 0x02：发送密钥 */
+    /* 已解锁时重复收到密钥（上轮正响应丢失、上位机重发）：直接回正响应，幂等 */
+    if (securityUnlocked == 1U) {
+        uint8_t okPayload[1];
+        okPayload[0] = subFunc;
+        UDS_SendPositiveResponse(UDS_SID_SECURITY_ACCESS, okPayload, 1);
+        return;
+    }
+
     /* 必须先请求过种子才能发密钥 */
     if (securitySeedRequested != 1U) {
         UDS_SendNegativeResponse(UDS_SID_SECURITY_ACCESS, UDS_NRC_REQUEST_SEQUENCE_ERROR);
@@ -448,6 +464,17 @@ static void UDS_HandleWriteDID(const can_frame_t *frame)
         return;
     }
 
+    /* 幂等保护：本会话已成功提交过（0x2E 正响应丢失、CANoe 超时重发场景）。
+       直接重发原正响应，不再重复提交——否则会把激活槽再翻回去。 */
+    if (updateCommitted == 1U) {
+        uint8_t retryPayload[3];
+        retryPayload[0] = (uint8_t)(did >> 8);
+        retryPayload[1] = (uint8_t)(did & 0xFFU);
+        retryPayload[2] = 0x00U;  /* status = 0 表示成功 */
+        UDS_SendPositiveResponse(UDS_SID_WRITE_DID, retryPayload, 3);
+        return;
+    }
+
     /* 提取上位机给的 CRC32（大端） */
     uint32_t expectedCrc = ((uint32_t)frame->data[4] << 24) |
                            ((uint32_t)frame->data[5] << 16) |
@@ -477,6 +504,9 @@ static void UDS_HandleWriteDID(const can_frame_t *frame)
 
     /* 清除升级标志 */
     FlashApp_EraseBootSector(UPGRADE_FLAG_ADDR);
+
+    /* 标记本会话已提交：后续 0x2E 重发只回响应、不再提交（幂等） */
+    updateCommitted = 1U;
 
     /* 正响应：DID + status(0=pass) */
     uint8_t payload[3];
@@ -552,6 +582,7 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
     downloadTotalSize = (uint32_t)size;
     blockCounter     = 1U;
     dataBufferIndex  = 0U;
+    updateCommitted  = 0U;  /* 新下载会话，允许 0x2E 提交 */
     bootloaderActive = 1U;  /* 升级中，禁止跳 App */
 
     /* 构造正响应：数据格式标识 + 地址长度 + 每块最大字节数 */

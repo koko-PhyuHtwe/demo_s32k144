@@ -791,10 +791,12 @@ void UDS_Tick(void)
  *         6. 跳转到 App 的 Reset_Handler
  *         不会返回
  *
- *         三条调用路径统一在此处做 Deinit：
+ *         两条调用路径统一在此处做 Deinit：
  *           - 上电首次跳（main.c，CAN 未初始化，Deinit 内部 if 判空安全）
- *           - 0x2E CRC 通过后跳（UDS_HandleWriteDID，CAN/UART 已初始化）
  *           - S3Server 5 秒超时跳（UDS_Tick，CAN/UART 已初始化）
+ *
+ *         注：0x2E CRC 通过后不直接调用本函数，而是等上位机发 0x11 复位，
+ *         让 Boot 走正常启动流程再跳，避免带着 UDS 上下文跳转。
  */
 void Jump_To_App(uint32_t slotBase)
 {
@@ -803,7 +805,7 @@ void Jump_To_App(uint32_t slotBase)
     uint32_t appPc  = *(volatile uint32_t *)(slotBase + 4U);
 
     /* 2. 合法性检查：
-     *    - MSP 必须在 SRAM 范围内 (S32K144: 0x20000000 ~ 0x2000F000)
+     *    - MSP 必须在 SRAM 范围内 (S32K144: 0x20000000 ~ 0x2000FFFF)
      *    - PC  必须在当前槽范围内 (slotBase ~ slotBase+SLOT_SIZE)
      *    任一不通过就认为是非法 App（比如残留测试数据）
      */

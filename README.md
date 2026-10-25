@@ -210,8 +210,6 @@ demo_s32k144/
 │   ├── uds_download.py                ← Python 离线 UDS 报文生成工具
 │   ├── check_crc32.py                 ← CRC32 一致性校验工具
 │   └── uds_frames.csv                 ← 参考报文清单（Python 工具生成）
-├── docs/
-│   └── interview_uds_cheatsheet.md    ← 面试速记卡片
 │
 ├── Debug_FLASH/                       ← Bootloader 编译输出（IDE 生成）
 ├── Debug_APP_A/                       ← app_a.elf + app_a.bin（IDE 生成）
@@ -560,7 +558,6 @@ Bit Rate = 8MHz / (0+1) / 16 = 500,000 bps
 - `.project` / `.cproject`
 - `canoe/uds_download.can`（CANoe 脚本）
 - `tools/`（Python 工具脚本）
-- `docs/`（文档）
 - `.gitignore` / `README.md`
 
 **🚫 忽略：**

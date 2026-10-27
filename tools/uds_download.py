@@ -4,8 +4,8 @@ S32K144 Bootloader UDS 下载工具（A/B 双区架构）
 CAN ID: 0x7E0 (请求), 0x7E8 (响应)   ← ISO 14229-2 物理寻址约定
 
 A/B 双区说明：
-  - Bootloader 会忽略 0x34 请求里的地址，自动写入"非激活槽"（空闲槽）
-  - 新版固件永远写到空闲槽，CRC 校验通过后才原子切换激活槽
+  - Bootloader 会忽略 0x34 请求里的地址，自动写入非激活槽
+  - 新版固件永远写到非激活槽，CRC 校验通过后才原子切换激活槽
   - 因此升级中途断电不会破坏正在运行的固件（可回滚）
   - 镜像按链接地址区分：app_a.bin(0x10000) / app_b.bin(0x48000)，
     由 CANoe 脚本通过 0x22 F19A 读激活槽后自动选镜像。
@@ -30,7 +30,7 @@ import os
 BIN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "app_a.bin")
 CAN_REQUEST_ID = 0x7E0    # UDS 请求 ID（ISO 14229-2）
 CAN_RESPONSE_ID = 0x7E8   # UDS 响应 ID（ISO 14229-2），本脚本仅用于打印提示
-# 下载目标地址：A/B 双区下 Bootloader 忽略此值，自动写入空闲槽，仅作占位
+# 下载目标地址：A/B 双区下 Bootloader 忽略此值，自动写入非激活槽，仅作占位
 APP_START_ADDR = 0x00010000
 BLOCK_SIZE = 4  # 每块数据字节数（与固件实现一致）
 

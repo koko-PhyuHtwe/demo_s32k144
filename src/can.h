@@ -45,7 +45,7 @@ void CAN_Init(void);
 void CAN_Deinit(void);
 
 /**
- * @brief  通过轮询模式发送 CAN 消息
+ * @brief  通过非阻塞模式发送 CAN 消息
  * @param  id:   CAN 消息 ID
  * @param  data: 数据指针（最多 8 字节）
  * @param  len:  数据长度

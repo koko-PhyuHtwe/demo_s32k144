@@ -39,7 +39,7 @@ static uint8_t canInitialized = 0;                 /* CAN 初始化标志 */
  * @param  eventType     事件类型
  * @param  buffIdx       邮箱索引
  * @param  flexcanState  CAN 状态指针
- * @note   接收到数据后：1) 发送回复  2) 重新启动接收
+ * @note   接收到数据后：1) 拷贝到环形队列  2) 重新启动接收
  */
 static void CAN_Callback(uint8_t instance, flexcan_event_type_t eventType,
                           uint32_t buffIdx, flexcan_state_t *flexcanState);
@@ -133,7 +133,7 @@ void CAN_GetRxFrame(can_frame_t *frame)
  * @param  eventType     事件类型
  * @param  buffIdx       邮箱索引
  * @param  flexcanState  CAN 状态指针
- * @note   接收到数据后：1) 发送回复  2) 重新启动接收
+ * @note   接收到数据后：1) 拷贝到环形队列  2) 重新启动接收
  */
 static void CAN_Callback(uint8_t instance, flexcan_event_type_t eventType,
                           uint32_t buffIdx, flexcan_state_t *flexcanState)

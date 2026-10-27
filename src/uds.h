@@ -1,7 +1,7 @@
 /**
  * @file    uds.h
  * @brief   UDS 诊断服务头文件
- * @details 实现 ISO 14229 UDS 协议子集（会话控制 / ECU 复位 / 读 DID）
+ * @details 实现 ISO 14229 UDS 协议子集（8 个服务：会话控制 / ECU 复位 / 读 DID / 安全访问 / 写 DID / 请求下载 / 传输数据 / 退出传输）
  */
 
 #ifndef UDS_H

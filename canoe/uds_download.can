@@ -64,13 +64,13 @@ ReadAppBin(char binName[])
     snprintf(fullPath, 256, "C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\%s", binName);
     fileHandle = openFileRead(fullPath, 1);
   }
-  /* 再回退到 IDE 编译输出目录（Debug_APP_A / Debug_APP_B 自动生成的 bin） */
+  /* 再回退到 IDE 编译输出目录（APP_A / APP_B 自动生成的 bin） */
   if (fileHandle == 0)
   {
     if (strncmp(binName, "app_a", 5) == 0)
-      snprintf(fullPath, 256, "C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\Debug_APP_A\\%s", binName);
+      snprintf(fullPath, 256, "C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\APP_A\\%s", binName);
     else
-      snprintf(fullPath, 256, "C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\Debug_APP_B\\%s", binName);
+      snprintf(fullPath, 256, "C:\\Users\\10608\\Documents\\NXP_S32_3.4\\demo_s32k144\\APP_B\\%s", binName);
     fileHandle = openFileRead(fullPath, 1);
   }
 

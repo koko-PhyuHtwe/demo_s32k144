@@ -4,7 +4,7 @@
  * @details A/B 双区（Slot A / Slot B）架构的元数据管理：
  *          - 描述表存放在 Flash 元数据区 0x0000F000（1 个 4KB 扇区）
  *          - 记录每个槽的版本号 / CRC32 / 大小 / 状态，以及当前激活槽
- *          - 升级采用"写空闲槽 → CRC 校验 → 原子提交"策略
+ *          - 升级采用"写非激活槽 → CRC 校验 → 原子提交"策略
  */
 
 #ifndef PARTITION_H
@@ -85,7 +85,7 @@ uint32_t Partition_GetActiveBase(void);
 uint32_t Partition_GetActiveVersion(void);
 
 /**
- * @brief  获取非激活槽（空闲槽）的基地址，作为下载目标
+ * @brief  获取非激活槽的基地址，作为下载目标
  * @note   升级时永远写入非激活槽，完成后原子切换
  */
 uint32_t Partition_GetInactiveBase(void);

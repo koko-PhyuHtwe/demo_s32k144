@@ -558,8 +558,8 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
     /* 解析大小（2字节，大端）；地址忽略上位机值，强制使用非激活槽 */
     uint16_t size = ((uint16_t)frame->data[6] << 8) | frame->data[7];
 
-    /* 目标地址 = 非激活槽（空闲槽）基地址：
-       新固件永远写到空闲槽，掉电/失败不破坏正在运行的固件（A/B 双区核心思想） */
+    /* 目标地址 = 非激活槽基地址：
+       新固件永远写到非激活槽，掉电/失败不破坏正在运行的固件 */
     uint32_t addr = Partition_GetInactiveBase();
 
     /* 大小校验：不能为 0，且不能超过单槽大小（224KB） */

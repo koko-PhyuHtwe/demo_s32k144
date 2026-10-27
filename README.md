@@ -121,7 +121,7 @@ Cortex-M 的程序地址在**编译链接时定死**（向量表、函数、常�
 
 同一份源码链接两次得到两份成品。**镜像的链接地址必须 = 目标槽的地址**，否则跳转时 Bootloader 的 PC 合法性校验（`PC ∈ [slotBase, slotBase+224KB)`）会拒绝，App 起不来。
 
-### 升级流程（写入"空闲槽" + 原子切换）
+### 升级流程（写入非激活槽 + 原子切换）
 
 ```
 上位机(CANoe)                              Bootloader
@@ -148,7 +148,7 @@ Cortex-M 的程序地址在**编译链接时定死**（向量表、函数、常�
 **关键点：**
 - **刷哪个区 = Bootloader 决定**（永远写非激活槽），上位机只通过 0x22 F19A **读取**激活槽来**选对镜像**。
 - **提交 = 原子操作**：分区表（0xF000）一次擦写完成"写新槽信息 + 翻转激活槽"。
-- **掉电安全**：中途断电只毁空闲槽，激活槽（运行中的固件）完好，上电照常启动。
+- **掉电安全**：中途断电只毁非激活槽，激活槽（运行中的固件）完好，上电照常启动。
 
 ### 断电测试结果（已验证 ✅）
 
@@ -162,12 +162,12 @@ Cortex-M 的程序地址在**编译链接时定死**（向量表、函数、常�
 
 | 构建配置 | 链接脚本 | 预处理宏 | 起始地址 | 用途 |
 |---------|---------|---------|---------|------|
-| **Debug_FLASH** | `S32K144_64_flash.ld` | 无 | 0x00000000 | Bootloader 固件 |
-| **Debug_RAM** | `S32K144_64_ram.ld` | 无 | RAM | 调试用（不烧 Flash） |
-| **Debug_APP_A** | `S32K144_64_app_a.ld` | `BUILD_APP` | 0x00010000 | App（Slot A 镜像） |
-| **Debug_APP_B** | `S32K144_64_app_b.ld` | `BUILD_APP` | 0x00048000 | App（Slot B 镜像） |
+| **Boot_FLASH** | `S32K144_64_flash.ld` | 无 | 0x00000000 | Bootloader 固件 |
+| **Boot_RAM** | `S32K144_64_ram.ld` | 无 | RAM | 调试用（不烧 Flash） |
+| **APP_A** | `S32K144_64_app_a.ld` | `BUILD_APP` | 0x00010000 | App（Slot A 镜像） |
+| **APP_B** | `S32K144_64_app_b.ld` | `BUILD_APP` | 0x00048000 | App（Slot B 镜像） |
 
-App 切 IDE 构建配置分别编译：选中 **Debug_APP_A** / **Debug_APP_B**，各按一次 `Ctrl+B`，自动生成 `Debug_APP_A/app_a.bin` 和 `Debug_APP_B/app_b.bin`（已配置 Create Flash Image 自动出 bin）。
+App 切 IDE 构建配置分别编译：选中 **APP_A** / **APP_B**，各按一次 `Ctrl+B`，自动生成 `APP_A/app_a.bin` 和 `APP_B/app_b.bin`（已配置 Create Flash Image 自动出 bin）。
 
 同一套源文件，[main.c](file:///c:/Users/10608/Documents/NXP_S32_3.4/demo_s32k144/src/main.c) 中用 `#ifdef BUILD_APP` 切换：
 ```c
@@ -211,9 +211,10 @@ demo_s32k144/
 │   ├── check_crc32.py                 ← CRC32 一致性校验工具
 │   └── uds_frames.csv                 ← 参考报文清单（Python 工具生成）
 │
-├── Debug_FLASH/                       ← Bootloader 编译输出（IDE 生成）
-├── Debug_APP_A/                       ← app_a.elf + app_a.bin（IDE 生成）
-├── Debug_APP_B/                       ← app_b.elf + app_b.bin（IDE 生成）
+├── Boot_FLASH/                        ← Bootloader 编译输出（IDE 生成）
+├── Boot_RAM/                          ← RAM 调试编译输出（IDE 生成）
+├── APP_A/                             ← app_a.elf + app_a.bin（IDE 生成）
+├── APP_B/                             ← app_b.elf + app_b.bin（IDE 生成）
 │
 ├── .gitignore
 └── README.md
@@ -375,11 +376,11 @@ Final : 0x11 01                  → ECU 复位 (正响应 0x51 01)
 - 0x22 F19A 读激活槽 → **自动选择 app_a.bin / app_b.bin**
 - 数据块超时重发 + **NRC 0x73 自动重同步**（响应偶发丢失时自愈，不中断刷写）
 - 单块超时 200ms，重试 5 次
-- 镜像文件自动查找（CANoe 工程目录 → 工程源码目录 → `Debug_APP_A/B` 编译目录，三级回退）
+- 镜像文件自动查找（CANoe 工程目录 → 工程源码目录 → `APP_A/B` 编译目录，三级回退）
 
 ### 使用方法
 
-1. 在 S32DS 里编译 Debug_APP_A / Debug_APP_B，bin 自动产出到对应编译目录
+1. 在 S32DS 里编译 APP_A / APP_B，bin 自动产出到对应编译目录
 2. 打开 CANoe，配置 CAN 通道波特率 500kbps，ID 过滤关闭
 3. 载入 `canoe/uds_download.can` 脚本（修改后需重新 Build，F8）
 4. App 运行时串口发 'U' 进入 Bootloader（或上电无 App 时自动等待）
@@ -492,21 +493,21 @@ Bit Rate = 8MHz / (0+1) / 16 = 500,000 bps
 
 ### 1. S32DS 图形界面编译（纯 IDE，无脚本）
 
-1. 选中 **Debug_FLASH** 构建配置 → `Ctrl+B` 编译 Bootloader
-2. 选中 **Debug_APP_A** → `Ctrl+B`，产物 `Debug_APP_A/app_a.elf` + `app_a.bin`（Create Flash Image 自动转换）
-3. 选中 **Debug_APP_B** → `Ctrl+B`，产物 `Debug_APP_B/app_b.elf` + `app_b.bin`
+1. 选中 **Boot_FLASH** 构建配置 → `Ctrl+B` 编译 Bootloader
+2. 选中 **APP_A** → `Ctrl+B`，产物 `APP_A/app_a.elf` + `app_a.bin`（Create Flash Image 自动转换）
+3. 选中 **APP_B** → `Ctrl+B`，产物 `APP_B/app_b.elf` + `app_b.bin`
 
 切换构建配置：右键工程 → Build Configurations → Set Active → 选配置。
 
 ### 2. 烧录 Bootloader
 
-用 J-Link 下载 `Debug_FLASH/demo_s32k144.hex` 或 elf 到板子。
+用 J-Link 下载 `Boot_FLASH/demo_s32k144.hex` 或 elf 到板子。
 
 ### 3. 刷写 App（两种方式）
 
 **方式 A：J-Link 直接烧**（开发调试最快）
-- Slot A：烧 `Debug_APP_A/app_a.bin` 到 0x10000
-- Slot B：烧 `Debug_APP_B/app_b.bin` 到 0x48000
+- Slot A：烧 `APP_A/app_a.bin` 到 0x10000
+- Slot B：烧 `APP_B/app_b.bin` 到 0x48000
 
 **方式 B：CANoe UDS 刷写（真实 A/B 升级流程）**
 - 上电 Bootloader → CANoe 开始测量 → 自动读槽选镜像 → 下载 → 复位

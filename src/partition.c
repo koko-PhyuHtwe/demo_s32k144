@@ -2,7 +2,7 @@
  * @file    partition.c
  * @brief   分区描述表源文件
  * @details A/B 双区元数据管理：读写 Flash 元数据区里的分区描述表，
- *          支持"写空闲槽 → 原子提交"的升级提交流程。
+ *          支持"写非激活槽 → 原子提交"的升级提交流程。
  */
 
 #include "partition.h"
@@ -84,7 +84,7 @@ uint32_t Partition_GetInactiveBase(void)
  * @param  size   新固件字节数
  * @return 0=成功, 1=失败
  * @note   A/B 双区流程：
- *         1. 目标槽 = 非激活槽（新固件写空闲槽）
+ *         1. 目标槽 = 非激活槽（新固件写入非激活槽）
  *         2. 新版本号 = 当前激活槽版本 + 1
  *         3. 更新 RAM 副本中目标槽的 version/crc/size/state
  *         4. 翻转 active_slot
@@ -92,7 +92,7 @@ uint32_t Partition_GetInactiveBase(void)
  */
 uint8_t Partition_CommitUpdate(uint32_t crc32, uint32_t size)
 {
-    /* 目标槽 = 非激活槽：升级永远写空闲槽，提交时原子切换 */
+    /* 目标槽 = 非激活槽：升级永远写非激活槽，提交时原子切换 */
     slot_id_t target = (Partition_GetActiveSlot() == SLOT_A) ? SLOT_B : SLOT_A;
 
     /* 新版本号 = 当前激活槽版本 + 1 */

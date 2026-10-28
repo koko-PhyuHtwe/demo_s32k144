@@ -22,14 +22,15 @@ void FlashApp_Init(void)
  */
 uint8_t FlashApp_Erase(uint32_t addr, uint32_t size)
 {
-    /* 1. 地址安全检查：不能擦 Bootloader 区域 */
+    /* 1. 地址安全检查：不能擦 Bootloader 区域，且整个擦除区间落在 App 区内 */
     if (addr < APP_FLASH_BASE) {
         return 1U;
     }
-    if ((addr + size) > APP_FLASH_END) {
+    if (size == 0U) {
         return 1U;
     }
-    if (size == 0U) {
+    /* 用减法比较而非 addr+size，避免 size 极大时 32 位加法回绕绕过检查 */
+    if ((addr >= APP_FLASH_END) || (size > (APP_FLASH_END - addr))) {
         return 1U;
     }
 
@@ -38,6 +39,12 @@ uint8_t FlashApp_Erase(uint32_t addr, uint32_t size)
     uint32_t alignedSize = size;
     if ((alignedSize % 0x1000U) != 0U) {
         alignedSize = ((alignedSize / 0x1000U) + 1U) * 0x1000U;
+    }
+
+    /* 2.1 对齐后必须复查上界：size 向上取整可能越出 App 区末尾
+     *     （例：addr=0x7F800,size=0x800 → 取整成 0x1000，会擦到 0x70000~0x80800） */
+    if (alignedSize > (APP_FLASH_END - alignedAddr)) {
+        return 1U;
     }
 
     /* 3. 关中断（擦除期间不能被打断） */
@@ -58,14 +65,23 @@ uint8_t FlashApp_Erase(uint32_t addr, uint32_t size)
  * @param  data  要写入的数据
  * @param  size  数据大小（必须 8 字节对齐）
  * @return 0=成功, 1=失败
+ * @note   addr/size 必须完整落在 App 区 [APP_FLASH_BASE, APP_FLASH_END) 内，
+ *         否则拒绝写入（防止升级数据越界写穿激活槽/槽末尾）。
  */
 uint8_t FlashApp_Write(uint32_t addr, const uint8_t *data, uint32_t size)
 {
-    /* 1. 地址安全检查 */
+    /* 1. 地址安全检查：下界 + 上界，整个写入范围必须落在 App 区内 */
     if (addr < APP_FLASH_BASE) {
         return 1U;
     }
+    if (addr >= APP_FLASH_END) {
+        return 1U;
+    }
     if (size == 0U) {
+        return 1U;
+    }
+    /* 用减法比较而非 addr+size，避免 size 极大时 32 位加法回绕绕过检查 */
+    if (size > (APP_FLASH_END - addr)) {
         return 1U;
     }
 

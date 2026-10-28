@@ -1,0 +1,8 @@
+{
+    "files.readonlyExclude": {
+        "**/.vscode/settings.json": true
+    },
+    "files.readonlyInclude": {
+        "**": true
+    }
+}

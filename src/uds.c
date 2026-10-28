@@ -562,8 +562,13 @@ static void UDS_HandleRequestDownload(const can_frame_t *frame)
        新固件永远写到非激活槽，掉电/失败不破坏正在运行的固件 */
     uint32_t addr = Partition_GetInactiveBase();
 
-    /* 大小校验：不能为 0，且不能超过单槽大小（224KB） */
-    if ((size == 0U) || ((uint32_t)size > SLOT_SIZE)) {
+    /* 大小校验：不能为 0，且"起点 + 长度"不能越过 App 区末尾。
+     * 注意 size 只有 2 字节（最大 65535），所以"是否超过单槽 224KB"永远为假
+     * （原来的 (uint32_t)size > SLOT_SIZE 是条编译期就能判定的死检查）。
+     * 真正该守的不变量是"整段下载区间落在 [APP_FLASH_BASE, APP_FLASH_END) 内"，
+     * 用减法比较避免 32 位加法回绕；将来协议改成 4 字节长度时这条检查依然有效。 */
+    if ((size == 0U) || (addr >= APP_FLASH_END) ||
+        ((uint32_t)size > (APP_FLASH_END - addr))) {
         UDS_SendNegativeResponse(UDS_SID_REQUEST_DOWNLOAD, UDS_NRC_REQUEST_OUT_OF_RANGE);
         return;
     }
@@ -629,24 +634,50 @@ static void UDS_HandleTransferData(const can_frame_t *frame)
     }
     uint8_t recvDataLen = dataLen - 2U;  /* 减去 SID 和 BlockNumber */
     if (recvDataLen > 4U) {
-        recvDataLen = 4U;
+        /* 每块最多 4 字节（0x34 响应里已声明）。超了就明确拒绝，
+         * 不能静默截断——截断会让上位机的字节流整体错位，
+         * 现场只能等到 0x2E 报 CRC 失败，根本查不出原因。 */
+        UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_INVALID_MESSAGE_LENGTH);
+        return;
     }
 
-    /* 把数据放入缓存 */
-    for (uint8_t i = 0U; i < recvDataLen; i++) {
-        dataBuffer[dataBufferIndex++] = frame->data[3U + i];
-    }
+    /* 越界保护：已写字节 + 缓存中字节 + 本帧字节 不得超过 0x34 声明的总长度。
+     * 否则上位机多发数据（或 block 序号一直对）会把 downloadAddr 一路推过
+     * 槽末尾，写穿非激活槽之后的 Flash 区域，且不可恢复。
+     * 上限取"总长度向上对齐到 4"：CANoe 脚本按 ceil(size/4) 发块，最后一块
+     * 会用填充字节凑满 4 字节，必须容忍；这样最多多写 3 字节，仍在已擦除的
+     * 槽内，且 CRC 只覆盖 size 字节，不受影响。 */
+    {
+        uint32_t receivedSoFar = (downloadAddr - downloadStartAddr) + (uint32_t)dataBufferIndex;
+        uint32_t allowedTotal  = (downloadTotalSize + 3U) & ~3U;
 
-    /* 攒满 8 字节，写一次 Flash */
-    if (dataBufferIndex >= 8U) {
-        uint8_t result = FlashApp_Write(downloadAddr, dataBuffer, 8U);
-        if (result != 0U) {
-            UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
-            downloadState = DOWNLOAD_IDLE;
+        if ((receivedSoFar >= allowedTotal) ||
+            ((uint32_t)recvDataLen > (allowedTotal - receivedSoFar))) {
+            UART_SendString("Download overflow, abort (restart from 0x34)\r\n");
+            UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_REQUEST_OUT_OF_RANGE);
+            downloadState   = DOWNLOAD_IDLE;  /* 中止本次下载，需重新 0x34 */
+            dataBufferIndex = 0U;
             return;
         }
-        downloadAddr += 8U;
-        dataBufferIndex = 0U;
+    }
+
+    /* 把数据放入缓存；每攒满 8 字节立刻写一次 Flash。
+     * 注意必须"边填边判满"：若一次性拷完再判，遇到上位机发 3/5 字节的不齐帧，
+     * dataBufferIndex 会累积到 8 以上，dataBuffer[8] 就被越界写（数组只有 8 字节）。 */
+    for (uint8_t i = 0U; i < recvDataLen; i++) {
+        dataBuffer[dataBufferIndex++] = frame->data[3U + i];
+
+        if (dataBufferIndex >= 8U) {
+            uint8_t result = FlashApp_Write(downloadAddr, dataBuffer, 8U);
+            if (result != 0U) {
+                UDS_SendNegativeResponse(UDS_SID_TRANSFER_DATA, UDS_NRC_GENERAL_PROGRAMMING_FAILURE);
+                downloadState   = DOWNLOAD_IDLE;
+                dataBufferIndex = 0U;
+                return;
+            }
+            downloadAddr += 8U;
+            dataBufferIndex = 0U;
+        }
     }
 
     /* 块序号 +1（自然溢出: 255 → 0 → 1 → 2 → ...） */
